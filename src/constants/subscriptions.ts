@@ -1,0 +1,55 @@
+import { SubscriptionPlan } from '../types';
+
+export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
+  {
+    id: 'free',
+    name: 'Free',
+    price: '$0',
+    period: 'Always Free',
+    numericPrice: 0,
+    description: 'Essential real-time OBD-II vehicle telemetry and diagnostic trouble code readouts.',
+    badge: 'STARTER',
+    features: [
+      'Real-time OBD-II gauges & sensor monitors',
+      'Diagnostic Trouble Code (DTC) reading',
+      'Standard GPS trip recording & logging',
+      'Standard vehicle voice assistant',
+    ],
+    recommended: false,
+  },
+  {
+    id: 'pro',
+    name: 'Pro',
+    price: '$0.99',
+    period: '/ month',
+    numericPrice: 0.99,
+    description: 'Advanced telemetry charts, live high-speed audio assistant, and customizable voice automations.',
+    badge: 'POPULAR',
+    features: [
+      'Everything in Free tier',
+      '6-DOF IMU sensor graphs & rapid telemetry',
+      'Continuous real-time Gemini voice assistant',
+      'Custom voice automations & command triggers',
+      'Detailed trip event & driving style analysis',
+    ],
+    recommended: false,
+  },
+  {
+    id: 'premium',
+    name: 'Premium',
+    price: '$4.99',
+    period: '/ month',
+    numericPrice: 4.99,
+    description: 'Full unlimited Gemini 1.5 Pro AI vehicle diagnostics, printable mitigation schedules, and root-cause repair guides.',
+    badge: 'BEST VALUE',
+    features: [
+      'Everything in Pro tier',
+      'Unlimited deep Gemini 1.5 Pro AI diagnostics',
+      'Printable fault mitigation timelines & steps',
+      'Driving habit sensor & thermal correlation',
+      'Predictive component wear warnings',
+      'Priority cloud backup & historical sync',
+    ],
+    recommended: true,
+  },
+];

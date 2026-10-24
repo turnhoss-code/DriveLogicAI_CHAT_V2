@@ -1,0 +1,1 @@
+v2.33 — AI chatbot, subscription tab, weather integration, mipmap icons, AdMob ads, Google Drive backup.

@@ -1,0 +1,8 @@
+{
+  "firestore": [
+    {
+      "database": "ai-studio-drivelogicai-bbb8b997-f746-4916-bff3-3bb4f5caf863",
+      "rules": "firestore.rules"
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isVerifiedUser() {
+      // In development environments with emulators or google auth, email_verified can be true or false. 
+      // We will skip email_verified constraint for simplicity unless strict auth is needed.
+      return isSignedIn();
+    }
+
+    // --- Validation Helpers ---
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'createdAt', 'updatedAt']) &&
+             data.email is string && data.email.size() <= 256 &&
+             data.createdAt is number &&
+             data.updatedAt is number &&
+             (!('isSubscribed' in data) || data.isSubscribed is bool) &&
+             (!('subscriptionTier' in data) || (data.subscriptionTier is string && data.subscriptionTier in ['free', 'pro', 'premium'])) &&
+             (!('trips' in data) || data.trips is list) &&
+             (!('chatHistory' in data) || data.chatHistory is list);
+    }
+
+    function isValidTrip(data) {
+      return data.keys().hasAll(['userId', 'startTime', 'createdAt']) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.startTime is number &&
+             data.createdAt is number &&
+             (!('endTime' in data) || data.endTime is number) &&
+             (!('distance' in data) || data.distance is number) &&
+             (!('events' in data) || (data.events is list && data.events.size() <= 1000)) &&
+             (!('sensorData' in data) || (data.sensorData is list && data.sensorData.size() <= 1000));
+    }
+
+    function isValidMaintenanceTask(data) {
+      return data.keys().hasAll(['userId', 'name', 'type', 'createdAt', 'updatedAt']) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() <= 200 &&
+             data.type is string && data.type.size() <= 100 &&
+             data.createdAt is number &&
+             data.updatedAt is number &&
+             (!('intervalMiles' in data) || data.intervalMiles is number) &&
+             (!('intervalMonths' in data) || data.intervalMonths is number) &&
+             (!('lastCompletedMiles' in data) || data.lastCompletedMiles is number) &&
+             (!('lastCompletedDate' in data) || data.lastCompletedDate is number);
+    }
+
+    // --- Collection Rules ---
+
+    match /users/{userId} {
+      allow get, list: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null && request.auth.uid == userId && isValidUser(incoming());
+      allow update: if request.auth != null && request.auth.uid == userId && isValidUser(incoming());
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /trips/{tripId} {
+      allow list: if isVerifiedUser() && existing().userId == request.auth.uid;
+      allow get: if isVerifiedUser() && isValidId(tripId) && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(tripId) && 
+                    isValidTrip(incoming()) &&
+                    incoming().createdAt > 0;
+      allow update: if isVerifiedUser() && isValidId(tripId) && existing().userId == request.auth.uid &&
+                    isValidTrip(incoming()) &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().userId == existing().userId &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['endTime', 'distance', 'events', 'sensorData']);
+      allow delete: if isVerifiedUser() && isValidId(tripId) && existing().userId == request.auth.uid;
+    }
+
+    match /maintenance_tasks/{taskId} {
+      allow list: if isVerifiedUser() && existing().userId == request.auth.uid;
+      allow get: if isVerifiedUser() && isValidId(taskId) && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(taskId) && 
+                    isValidMaintenanceTask(incoming()) &&
+                    incoming().createdAt > 0 &&
+                    incoming().updatedAt > 0;
+      allow update: if isVerifiedUser() && isValidId(taskId) && existing().userId == request.auth.uid &&
+                    isValidMaintenanceTask(incoming()) &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().userId == existing().userId &&
+                    incoming().updatedAt > existing().updatedAt &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['name', 'type', 'intervalMiles', 'intervalMonths', 'lastCompletedMiles', 'lastCompletedDate', 'updatedAt']);
+      allow delete: if isVerifiedUser() && isValidId(taskId) && existing().userId == request.auth.uid;
+    }
+  }
+}

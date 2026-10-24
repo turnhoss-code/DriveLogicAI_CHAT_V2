@@ -1,0 +1,29 @@
+# Ensure binary files are NOT processed as text by git
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.jks binary
+*.p12 binary
+*.keystore binary
+*.aab binary
+*.apk binary
+*.zip binary
+*.jar binary
+*.aar binary
+
+# Text files use Unix line endings
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.xml text eol=lf
+*.gradle text eol=lf
+*.properties text eol=lf
+*.html text eol=lf
+*.css text eol=lf
