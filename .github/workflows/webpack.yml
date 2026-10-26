@@ -1,0 +1,9 @@
+- name: Render deploy service
+  # You may pin to the exact commit or the version.
+  # uses: glarivie/render-deploy-service-action@fbd7f233be873c0a9d60ed0cbaf9fd0c11443420
+  uses: glarivie/render-deploy-service-action@v1.0.5
+  with:
+    # The ID of the service. See https://api-docs.render.com/reference/create-deploy.
+    serviceId: 
+    # Authenticate all requests to the Render API with an API key.  See https://api-docs.render.com/reference/authentication.
+    apiKey: https://api.render.com/deploy/srv-da4r9i0n74is73ef0p0g?key=eACNYbUWPlo
