@@ -2,10 +2,14 @@ services:
   - type: web
     name: drivelogicai-chat-v2
     runtime: node
+    repo: https://github.com/turnhoss-code/DriveLogicAI_CHAT_V2
     region: oregon
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
+    healthCheckPath: /
+    domains:
+      - drivelogicai.ai.studio
     autoDeploy: true
     envVars:
       - key: NODE_ENV
@@ -13,4 +17,10 @@ services:
       - key: PORT
         value: 3000
       - key: GEMINI_API_KEY
+        sync: false
+      - key: VITE_MAPS_API_KEY
+        sync: false
+      - key: GOOGLE_MAPS_PLATFORM_KEY
+        sync: false
+      - key: google-site-verification
         sync: false
