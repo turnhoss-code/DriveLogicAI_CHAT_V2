@@ -78,15 +78,13 @@ function handleAutomotiveCommandFallback(text: string, contextData: any) {
   const rpm = contextData?.rpm || 0;
   const isRecording = Boolean(contextData?.isRecording);
 
-  // Route optimization & navigation commands
-  if (lower.includes('best route') || lower.includes('recommend route') || lower.includes('route optimization') || lower.includes('optimize route') || lower.includes('which route') || lower.includes('low wear route') || lower.includes('low-wear route')) {
+  if (lower.includes('best route') || lower.includes('recommend route') || lower.includes('route optimization') || lower.includes('optimize route') || lower.includes('which route') || lower.includes('route')) {
     return { 
-      text: "Based on historical trip logs, vehicle damage scores, and highway distance, the optimal route in New York is via smooth Parkway and Thruway corridors (e.g., I-87 or I-90). This route minimizes stop-and-go friction, lowers harsh braking events, and reduces drivetrain wear by 20% compared to local street stoplights.",
+      text: "Based on historical trip logs, vehicle damage scores, and highway distance, the optimal route in New York is via smooth Parkway and Thruway corridors (e.g., I-87 or I-90). This route minimizes harsh braking and wear.",
       functionCalls: [{ name: 'optimizeRoute', args: { origin: 'Current Location', destination: 'JFK Airport, NY' } }]
     };
   }
 
-  // Tab switching
   if (lower.includes('obd') || lower.includes('telemetry') || lower.includes('sensor')) {
     return { text: "Switching to OBD Diagnostics tab.", functionCalls: [{ name: 'changeTab', args: { tab: 'obd' } }] };
   }
@@ -100,7 +98,6 @@ function handleAutomotiveCommandFallback(text: string, contextData: any) {
     return { text: "Displaying vehicle maintenance schedule.", functionCalls: [{ name: 'changeTab', args: { tab: 'maintenance' } }] };
   }
 
-  // Recording commands
   if (lower.includes('start record') || lower.includes('start trip') || lower.includes('start logging')) {
     return { text: "Trip recording started.", functionCalls: [{ name: 'toggleRecording', args: { action: 'start' } }] };
   }
@@ -108,12 +105,10 @@ function handleAutomotiveCommandFallback(text: string, contextData: any) {
     return { text: "Trip recording stopped.", functionCalls: [{ name: 'toggleRecording', args: { action: 'stop' } }] };
   }
 
-  // Diagnostic command
   if (lower.includes('diagnos') || lower.includes('check engine') || lower.includes('scan') || lower.includes('trouble code')) {
     return { text: "Running vehicle diagnostic scan...", functionCalls: [{ name: 'diagnoseVehicle', args: {} }] };
   }
 
-  // Telematics direct questions
   if (lower.includes('speed') || lower.includes('how fast')) {
     return { text: `Current vehicle speed is ${speedMph} MPH (${Math.round(contextData?.speed || 0)} km/h).` };
   }
@@ -123,16 +118,11 @@ function handleAutomotiveCommandFallback(text: string, contextData: any) {
   if (lower.includes('status') || lower.includes('trip status')) {
     return { text: `Trip recording is currently ${isRecording ? 'active' : 'idle'}. Speed: ${speedMph} MPH, Engine: ${rpm} RPM.` };
   }
-  if (lower.includes('best route') || lower.includes('recommend route') || lower.includes('route optimization') || lower.includes('which route')) {
-    return { 
-      text: "Based on historical trip logs, vehicle damage scores, and highway distance, the best route in New York is via smooth Parkway and Thruway corridors (e.g., I-87 or I-90). This route minimizes stop-and-go friction, lowers harsh braking events, and reduces drivetrain wear by 20% compared to local street stoplights."
-    };
-  }
   if (lower.includes('battery') || lower.includes('voltage') || lower.includes('alternator')) {
-    return { text: `Electrical system output is currently running normally at ${contextData?.voltage ? Number(contextData.voltage).toFixed(2) : '14.2'}V, indicating an active charging alternator and healthy battery reserve.` };
+    return { text: `Electrical system output is currently running normally at ${contextData?.voltage ? Number(contextData.voltage).toFixed(2) : '14.2'}V, indicating an active charging alternator.` };
   }
   if (lower.includes('coolant') || lower.includes('temperature') || lower.includes('overheating')) {
-    return { text: `Engine coolant temperature is currently calibrated at ${contextData?.coolantTemp ? Math.round((contextData.coolantTemp * 9/5) + 32) : '194'}°F, which is within the optimal operating range (190°F–215°F).` };
+    return { text: `Engine coolant temperature is currently calibrated at ${contextData?.coolantTemp ? Math.round((contextData.coolantTemp * 9/5) + 32) : '194'}°F, which is within the optimal operating range.` };
   }
 
   return {
@@ -143,15 +133,13 @@ function handleAutomotiveCommandFallback(text: string, contextData: any) {
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
-  
+
   app.use(express.json());
 
-  // Gemini API Key diagnostic endpoint
   app.get("/api/keytest", (req, res) => {
     res.json({ configured: Boolean(process.env.GEMINI_API_KEY) });
   });
 
-  // Google Maps API Key endpoint
   app.get("/api/maps-key", (req, res) => {
     res.json({
       key: process.env.GOOGLE_MAPS_PLATFORM_KEY || "AIzaSyDX-VRPvfH-AzKUwmtu1DQ9_vzDn4y2f9E"
@@ -162,30 +150,23 @@ async function startServer() {
     const customApiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
     const { text, history, contextData, model: requestedModel, role: requestedRole, useSearch } = req.body;
 
-    // Model selection based on user specifications:
-    // - gemini-3.1-pro-preview for particularly complex tasks
-    // - gemini-3.5-flash for general tasks + search grounding
-    // - gemini-3.1-flash-lite for tasks that should happen fast
-    let selectedModel = "gemini-3.5-flash";
-    if (requestedModel === "gemini-3.1-pro-preview" || requestedModel === "pro") {
-      selectedModel = "gemini-3.1-pro-preview";
-    } else if (requestedModel === "gemini-3.1-flash-lite" || requestedModel === "fast" || requestedModel === "lite") {
-      selectedModel = "gemini-3.1-flash-lite";
-    } else if (requestedModel === "gemini-3.8-flash" || requestedModel === "gemini-3.5-flash" || requestedModel === "general") {
-      selectedModel = "gemini-3.5-flash";
+    let selectedModel = "gemini-2.5-flash";
+    if (requestedModel === "gemini-2.5-pro" || requestedModel === "pro") {
+      selectedModel = "gemini-2.5-pro";
+    } else if (requestedModel === "gemini-2.0-flash-lite" || requestedModel === "fast" || requestedModel === "lite") {
+      selectedModel = "gemini-2.0-flash-lite";
+    } else if (requestedModel === "gemini-2.5-flash" || requestedModel === "general") {
+      selectedModel = "gemini-2.5-flash";
     } else {
-      // Auto-detect based on query complexity
       const lower = String(text || '').toLowerCase();
-      if (lower.includes('why') || lower.includes('diagnos') || lower.includes('trouble code') || lower.includes('dtc') || lower.includes('cylinder') || lower.includes('misfire') || lower.includes('catalytic') || lower.includes('transmiss')) {
-        selectedModel = "gemini-3.1-pro-preview";
+      if (lower.includes('why') || lower.includes('diagnos') || lower.includes('trouble code') || lower.includes('dtc') || lower.includes('cylinder') || lower.includes('misfire')) {
+        selectedModel = "gemini-2.5-pro";
       } else if (lower.includes('speed') || lower.includes('rpm') || lower.includes('status') || lower.includes('how fast') || lower.startsWith('record')) {
-        selectedModel = "gemini-3.1-flash-lite";
-      } else {
-        selectedModel = "gemini-3.5-flash";
+        selectedModel = "gemini-2.0-flash-lite";
       }
     }
 
-    const activeRole = requestedRole || (selectedModel === "gemini-3.1-pro-preview" ? "diagnostics" : selectedModel === "gemini-3.1-flash-lite" ? "telemetry" : "general");
+    const activeRole = requestedRole || (selectedModel === "gemini-2.5-pro" ? "diagnostics" : selectedModel === "gemini-2.0-flash-lite" ? "telemetry" : "general");
 
     try {
       const ai = getGenAI(customApiKey);
@@ -194,80 +175,17 @@ async function startServer() {
         return res.json({ ...fallback, model: selectedModel, role: activeRole });
       }
 
-      const tools: any[] = [
-        {
-          functionDeclarations: [
-            {
-              name: "changeTab",
-              description: "Change the current application tab",
-              parameters: {
-                type: Type.OBJECT,
-                properties: {
-                  tab: { type: Type.STRING, enum: ["obd", "damage", "gps", "maintenance"], description: "Tab to switch to" }
-                },
-                required: ["tab"]
-              }
-            },
-            {
-              name: "setNavigation",
-              description: "Set the navigation route from and to locations",
-              parameters: {
-                type: Type.OBJECT,
-                properties: {
-                  from: { type: Type.STRING, description: "Starting location" },
-                  to: { type: Type.STRING, description: "Destination location" }
-                },
-                required: ["from", "to"]
-              }
-            },
-            {
-              name: "diagnoseVehicle",
-              description: "Run an AI diagnostic check on the vehicle's current health",
-              parameters: { type: Type.OBJECT, properties: {} }
-            },
-            {
-              name: "toggleRecording",
-              description: "Start or stop trip data recording",
-              parameters: {
-                type: Type.OBJECT,
-                properties: {
-                  action: { type: Type.STRING, enum: ["start", "stop"], description: "Whether to start or stop recording" }
-                },
-                required: ["action"]
-              }
-            }
-          ]
-        }
-      ];
+      const tools: any[] = [{ functionDeclarations: [{ name: 'changeTab', description: 'Change the current application tab', parameters: { type: Type.OBJECT, properties: { tab: { type: Type.STRING, enum: ['obd','damage','gps','maintenance'], description: 'Tab to switch to' } }, required: ['tab'] } }, { name: 'setNavigation', description: 'Set the navigation route from and to locations', parameters: { type: Type.OBJECT, properties: { from: { type: Type.STRING, description: 'Starting location' }, to: { type: Type.STRING, description: 'Destination location' } }, required: ['from', 'to'] } }, { name: 'diagnoseVehicle', description: 'Run an AI diagnostic check on the vehicle\'s current health', parameters: { type: Type.OBJECT, properties: {} } }, { name: 'toggleRecording', description: 'Start or stop trip data recording', parameters: { type: Type.OBJECT, properties: { action: { type: Type.STRING, enum: ['start','stop'], description: 'Whether to start or stop recording' } }, required: ['action'] } }] }];
 
       if (useSearch !== false) {
         tools.push({ googleSearch: {} });
       }
 
-      let systemInstruction = "";
-      if (activeRole === "diagnostics") {
-        systemInstruction = `You are a Master Automotive Diagnostic Specialist AI.
-Analyse the provided OBD-II sensor data, vehicle trouble codes, and telemetry to give a concise, actionable report: identify any anomalies, likely causes, and recommended actions. Use plain English, avoid jargon, and keep the response under 300 words. Search the web for up-to-date Technical Service Bulletins (TSBs) and manufacturer recall information when relevant.
-Vehicle Model: ${contextData?.vehicleModel || 'Unknown'}.
-Current Speed: ${contextData?.speed ? Math.round(contextData.speed * 0.621371) : 0} mph.
-Current RPM: ${contextData?.rpm || 0}.
-Recording: ${contextData?.isRecording ? 'Active' : 'Idle'}.`;
-      } else if (activeRole === "telemetry") {
-        systemInstruction = `You are a high-speed vehicle telemetry and OBD-II copilot running on gemini-3.1-flash-lite. Deliver instantaneous, clear, concise answers (under 50 words) about current vehicle speed, engine RPM, battery voltage, and operating parameters.
-Current Speed: ${contextData?.speed ? Math.round(contextData.speed * 0.621371) : 0} mph.
-Current RPM: ${contextData?.rpm || 0}.
-Trip Recording: ${contextData?.isRecording ? 'Active' : 'Idle'}.`;
-      } else {
-        systemInstruction = `You are an automotive diagnostic specialist and real-time driving co-pilot in New York state running on gemini-3.5-flash with Google Search data grounding.
-When possible: recommend alternate routes based on logged trip data, obd2 data and damage scores. You diagnose vehicles using trip logs and obd2 live data with fault codes.
-Use Google Search data to get up to date and accurate information about road conditions, vehicle recalls, and mechanical specifications.
-Always keep answers concise, actionable, and under 150 words.
-Vehicle Model: ${contextData?.vehicleModel || 'Unknown'}.
-Current Speed: ${contextData?.speed ? Math.round(contextData.speed * 0.621371) : 0} mph.
-Current RPM: ${contextData?.rpm || 0}.
-Recording Status: ${contextData?.isRecording ? 'Recording' : 'Not recording'}.
-When the user says "Show me my maintenance tasks", use the changeTab tool with "maintenance".
-When they say "Start recording" or "Stop recording", use the toggleRecording tool.`;
+      let systemInstruction = `You are an automotive diagnostic specialist and real-time driving co-pilot in New York state running on ${selectedModel} with Google Search data grounding. Keep answers concise, actionable, and under 150 words.`;
+      if (activeRole === 'diagnostics') {
+        systemInstruction = `You are a Master Automotive Diagnostic Specialist AI. Analyse the provided OBD-II sensor data, vehicle trouble codes, and telemetry to give a concise, actionable report: identify any anomalies, likely causes, and recommended actions. Use plain English and keep answers under 200 words.`;
+      } else if (activeRole === 'telemetry') {
+        systemInstruction = `You are a high-speed vehicle telemetry and OBD-II copilot. Deliver instantaneous, clear, concise answers about current speed, engine metrics, and trip status.`;
       }
 
       let formattedHistory = [];
@@ -279,7 +197,7 @@ When they say "Start recording" or "Stop recording", use the toggleRecording too
       }
       formattedHistory.push({ role: 'user', parts: [{ text }] });
 
-      let responseText = "";
+      let responseText = '';
       let functionCalls = undefined;
       let webSources: { title: string; uri: string }[] = [];
 
@@ -287,24 +205,20 @@ When they say "Start recording" or "Stop recording", use the toggleRecording too
         const response = await ai.models.generateContent({
           model: selectedModel,
           contents: formattedHistory,
-          config: { 
+          config: {
             tools: tools as any,
             systemInstruction,
             toolConfig: { includeServerSideToolInvocations: true }
           }
         });
-        responseText = response.text || "";
+        responseText = response.text || '';
         functionCalls = response.functionCalls;
 
-        // Extract Google Search Grounding sources
         const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
         if (Array.isArray(groundingChunks)) {
           for (const chunk of groundingChunks) {
             if (chunk?.web?.uri) {
-              webSources.push({
-                title: chunk.web.title || new URL(chunk.web.uri).hostname,
-                uri: chunk.web.uri
-              });
+              webSources.push({ title: chunk.web.title || new URL(chunk.web.uri).hostname, uri: chunk.web.uri });
             }
           }
         }
@@ -322,18 +236,17 @@ When they say "Start recording" or "Stop recording", use the toggleRecording too
     }
   });
 
-  // Streaming endpoint for AIChatbot
   app.post("/api/gemini/chat", async (req, res) => {
     const customApiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
     const { message, history, modelType, role, useSearch, useMaps } = req.body;
-    const model = modelType || "gemini-3.5-flash";
+    const model = modelType || "gemini-2.5-flash";
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Transfer-Encoding", "chunked");
 
     let systemInstruction = "You are DriveLogic AI Co-Pilot, an intelligent automotive assistant.";
     if (role === "Mechanic") {
-      systemInstruction = "You are a Master Automotive Mechanic. Explain mechanical issues, OBD-II diagnostic trouble codes, vehicle systems, and maintenance protocols with precision and practical repair advice.";
+      systemInstruction = "You are a Master Automotive Mechanic. Explain mechanical issues, OBD-II diagnostic trouble codes, vehicle systems, and maintenance protocols with precision and practicality.";
     } else if (role === "Navigator") {
       systemInstruction = "You are a Route and Navigation Specialist. Provide optimal routes, lane recommendations, traffic guidance, and wear-reducing driving strategies.";
     }
@@ -346,7 +259,7 @@ When they say "Start recording" or "Stop recording", use the toggleRecording too
     try {
       const ai = getGenAI(customApiKey);
       if (!ai) {
-        res.write("DriveLogic Co-Pilot: AI services are currently operating in local automotive mode. You can check OBD-II diagnostics, GPS navigation, and maintenance logs directly from the dashboard tabs.");
+        res.write("DriveLogic Co-Pilot: AI services are currently operating in local automotive mode. You can check OBD-II diagnostics, GPS navigation, and maintenance logs directly from the dashboard.");
         return res.end();
       }
 
@@ -354,10 +267,7 @@ When they say "Start recording" or "Stop recording", use the toggleRecording too
       if (Array.isArray(history)) {
         formattedHistory = history
           .filter((m: any) => m && m.text && m.text.trim())
-          .map((m: any) => ({
-            role: m.role === 'user' ? 'user' : 'model',
-            parts: [{ text: String(m.text) }]
-          }));
+          .map((m: any) => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: String(m.text) }] }));
       }
       formattedHistory.push({ role: 'user', parts: [{ text: String(message) }] });
 
@@ -408,10 +318,9 @@ When they say "Start recording" or "Stop recording", use the toggleRecording too
         return res.json({ text: fallbackAnalysis });
       }
 
-      const model = "gemini-3.5-flash";
+      const model = "gemini-2.5-flash";
       const vehicleContext = vehicleModel ? `Vehicle Model: ${vehicleModel}` : `Vehicle Model: Unknown`;
-
-      const sensorContext = sensorHistory && sensorHistory.length > 0 
+      const sensorContext = sensorHistory && sensorHistory.length > 0
         ? `Recent Sensor Activity (last 60s):
            - Peak Acceleration: ${Math.max(...sensorHistory.map((h: any) => h.accel)).toFixed(2)}G
            - Peak Rotation Rate: ${Math.max(...sensorHistory.map((h: any) => h.gyro)).toFixed(2)} deg/s
@@ -462,13 +371,12 @@ Keep the tone professional, technical yet accessible, and concise. Use Markdown.
 
     const defaultExplanations: Record<string, string> = {
       'P0300': 'Random/Multiple Cylinder Misfire Detected. Likely causes: faulty spark plugs, ignition coils, vacuum leak, or low fuel pressure. Recommended action: inspect spark plugs and test fuel pressure.',
-      'P0420': 'Catalyst System Efficiency Below Threshold (Bank 1). Likely causes: failing catalytic converter, exhaust leak, or faulty downstream oxygen sensor. Recommended action: inspect exhaust and verify O2 sensor signals.',
+      'P0420': 'Catalyst System Efficiency Below Threshold (Bank 1). Likely causes: failing catalytic converter, exhaust leak, or faulty downstream oxygen sensor. Recommended action: inspect exhaust for leaks and verify oxygen sensor health.',
       'P0171': 'System Too Lean (Bank 1). Likely causes: dirty Mass Air Flow (MAF) sensor, vacuum leak, or clogged fuel injectors. Recommended action: check intake boots for leaks and clean MAF sensor.',
       'P0128': 'Coolant Thermostat (Coolant Temperature Below Thermostat Regulating Temperature). Likely causes: stuck-open thermostat or faulty ECT sensor. Recommended action: replace engine thermostat.',
     };
 
-    const fallback = defaultExplanations[code] || 
-      `OBD-II Code ${code}: Powertrain diagnostic trouble code indicating a detected subsystem anomaly. Recommended action: verify electrical wiring harness and sensor live stream parameters.`;
+    const fallback = defaultExplanations[code] || `OBD-II Code ${code}: Powertrain diagnostic trouble code indicating a detected subsystem anomaly. Recommended action: verify electrical wiring harness and sensor live stream parameters.`;
 
     try {
       const ai = getGenAI(customApiKey);
@@ -476,8 +384,8 @@ Keep the tone professional, technical yet accessible, and concise. Use Markdown.
         return res.json({ text: fallback });
       }
 
-      const model = "gemini-3.5-flash";
-      const prompt = `You are an expert automotive diagnostics AI. Provide a concise, plain English explanation of the OBD-II Diagnostic Trouble Code (DTC) ${code}. Include the likely causes and recommended actions. Keep the response under 150 words.`;
+      const model = "gemini-2.5-flash";
+      const prompt = `You are an expert automotive diagnostics AI. Provide a concise, plain English explanation of the OBD-II Diagnostic Trouble Code (DTC) ${code}. Include the likely causes and recommended next steps.`;
 
       const response = await ai.models.generateContent({
         model,
@@ -507,18 +415,15 @@ Keep the tone professional, technical yet accessible, and concise. Use Markdown.
       if (!ai) {
         return res.json({ text: fallbackOpt });
       }
-      
-      const model = "gemini-3.5-flash";
+
+      const model = "gemini-2.5-flash";
       const tripSummary = trips.map((t: any) => ({
         damage: t.averageDamageScore,
         distance: t.distance,
         events: t?.events?.length || 0
       }));
 
-      const prompt = `You are an automotive route optimisation AI. Use trip logs in conjunction with OBD2 data and stored historical data of the user combined with web data to diagnose the vehicle. Given historical route data including damage scores and distances:
-Trips: ${JSON.stringify(tripSummary)}
-
-Recommend the best route and explain why briefly in under 150 words. Focus on reducing vehicle stress, harsh braking, and damage scores in New York State corridors.`;
+      const prompt = `You are an automotive route optimisation AI. Use trip logs in conjunction with OBD2 data and stored historical data of the user combined with web data to diagnose the vehicle and recommend the best route in New York State. Trips: ${JSON.stringify(tripSummary)}. Recommend the best route and explain why briefly in under 150 words. Focus on reducing vehicle stress, harsh braking, and damage scores in New York State corridors.`;
 
       const response = await ai.models.generateContent({
         model,
@@ -534,7 +439,6 @@ Recommend the best route and explain why briefly in under 150 words. Focus on re
     }
   });
 
-  // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -553,7 +457,6 @@ Recommend the best route and explain why briefly in under 150 words. Focus on re
     console.log(`Server running on http://localhost:${PORT}`);
   });
 
-  // Setup WebSocket server for Gemini Live API
   const wss = new WebSocketServer({ server, path: '/live' });
 
   wss.on("error", (err: any) => {
@@ -574,25 +477,16 @@ Recommend the best route and explain why briefly in under 150 words. Focus on re
     let turnHasReplied = false;
     let pendingResponseTimeout: NodeJS.Timeout | null = null;
 
-    clientWs.on("error", () => {
-      // Gracefully handle client drop
-    });
+    clientWs.on("error", () => {});
 
     const safeSend = (payload: any) => {
       if (clientWs && clientWs.readyState === WebSocket.OPEN) {
         try {
           clientWs.send(
             typeof payload === 'string' ? payload : JSON.stringify(payload),
-            (err) => {
-              // Passing callback prevents ws from throwing unhandled senderOnError
-              if (err) {
-                // Client disconnected
-              }
-            }
+            (err) => {}
           );
-        } catch (sendErr) {
-          // Handled
-        }
+        } catch (sendErr) {}
       }
     };
 
@@ -607,23 +501,20 @@ Recommend the best route and explain why briefly in under 150 words. Focus on re
 
 CORE SPECIALIST CAPABILITIES & DIRECTIVES:
 1. Automotive Diagnostics:
-   - Analyse the provided OBD-II sensor data, DTCs, and engine telemetry.
-   - Give a concise, actionable report: identify any anomalies, likely causes, and recommended actions.
-   - Use plain English, avoid excessive jargon, and keep responses under 300 words.
+    - Analyse the provided OBD-II sensor data, DTCs, and engine telemetry.
+    - Give a concise, actionable report: identify any anomalies, likely causes, and recommended actions.
+    - Use plain English, avoid excessive jargon, and keep responses under 300 words.
 2. Route Optimisation & Driving Advice:
-   - Use trip logs in conjunction with OBD2 data and stored historical data of the user combined with web data to diagnose the vehicle.
-   - Given historical route data including damage scores and distances, recommend the best route and explain why briefly (under 150 words).
-   - In live voice mode, speak naturally, clearly, and concisely (1-3 sentences per turn).
+    - Recommend optimal routes across New York state using trip history, telemetry, and live web grounding when available.
+    - Keep responses brief and practical.
 
 PERSISTENT MEMORY OF PRIOR CHATS & CONVERSATIONS:
-The user has conversed with you in previous sessions. You possess persistent long-term memory of these prior conversations:
 ${priorChatsText}
-Reference prior topics, diagnostics, and queries whenever relevant to provide seamless conversational continuity.
 
 HISTORICAL TRIPS & STORED ROUTE DATA:
 ${priorTripsText}
 
-HISTORICAL HARSH DRIVING EVENTS CONTEXT (Braking, Acceleration, Cornering, Overheating):
+HISTORICAL HARSH DRIVING EVENTS CONTEXT:
 ${harshEventsText}
 
 CURRENT VEHICLE STATUS & TELEMETRY:
@@ -639,74 +530,7 @@ Live Telemetry: ${telemetry}
       let functionCalls: any = undefined;
       const webSources: { title: string; uri: string }[] = [];
 
-      const liveTools: any[] = [
-        {
-          functionDeclarations: [
-            {
-              name: "changeTab",
-              description: "Change the current application tab",
-              parameters: {
-                type: Type.OBJECT,
-                properties: {
-                  tab: { type: Type.STRING, enum: ["obd", "damage", "gps", "maintenance"], description: "Tab to switch to" }
-                },
-                required: ["tab"]
-              }
-            },
-            {
-              name: "setNavigation",
-              description: "Set the navigation route from and to locations",
-              parameters: {
-                type: Type.OBJECT,
-                properties: {
-                  from: { type: Type.STRING, description: "Starting location" },
-                  to: { type: Type.STRING, description: "Destination location" }
-                },
-                required: ["from", "to"]
-              }
-            },
-            {
-              name: "diagnoseVehicle",
-              description: "Run an AI diagnostic check on the vehicle's current health",
-              parameters: { type: Type.OBJECT, properties: {} }
-            },
-            {
-              name: "toggleRecording",
-              description: "Start or stop trip data recording",
-              parameters: {
-                type: Type.OBJECT,
-                properties: {
-                  action: { type: Type.STRING, enum: ["start", "stop"], description: "Whether to start or stop recording" }
-                },
-                required: ["action"]
-              }
-            },
-            {
-              name: "toggleSimulation",
-              description: "Toggle OBD-II vehicle simulation telemetry on or off",
-              parameters: {
-                type: Type.OBJECT,
-                properties: {
-                  enabled: { type: Type.BOOLEAN, description: "Whether simulation should be turned on or off" }
-                },
-                required: ["enabled"]
-              }
-            },
-            {
-              name: "optimizeRoute",
-              description: "Calculate and recommend an optimal low-wear route between New York locations",
-              parameters: {
-                type: Type.OBJECT,
-                properties: {
-                  origin: { type: Type.STRING, description: "Starting location in New York" },
-                  destination: { type: Type.STRING, description: "Destination in New York" }
-                },
-                required: ["destination"]
-              }
-            }
-          ]
-        }
-      ];
+      const liveTools: any[] = [{ functionDeclarations: [{ name: 'changeTab', description: 'Change the current application tab', parameters: { type: Type.OBJECT, properties: { tab: { type: Type.STRING, enum: ['obd', 'damage', 'gps', 'maintenance'], description: 'Tab to switch to' } }, required: ['tab'] } }, { name: 'setNavigation', description: 'Set the navigation route from and to locations', parameters: { type: Type.OBJECT, properties: { from: { type: Type.STRING, description: 'Starting location' }, to: { type: Type.STRING, description: 'Destination location' } }, required: ['from','to'] } }, { name: 'diagnoseVehicle', description: 'Run an AI diagnostic check on the vehicle\'s current health', parameters: { type: Type.OBJECT, properties: {} } }, { name: 'toggleRecording', description: 'Start or stop trip data recording', parameters: { type: Type.OBJECT, properties: { action: { type: Type.STRING, enum: ['start','stop'], description: 'Whether to start or stop recording' } }, required: ['action'] } }, { name: 'toggleSimulation', description: 'Toggle OBD-II vehicle simulation telemetry on or off', parameters: { type: Type.OBJECT, properties: { enabled: { type: Type.BOOLEAN, description: 'Whether simulation should be turned on or off' } }, required: ['enabled'] } }, { name: 'optimizeRoute', description: 'Calculate and recommend an optimal low-wear route between New York locations', parameters: { type: Type.OBJECT, properties: { origin: { type: Type.STRING, description: 'Starting location in New York' }, destination: { type: Type.STRING, description: 'Destination in New York' } }, required: ['destination'] } }] }];
 
       if (allowSearch !== false) {
         liveTools.push({ googleSearch: {} });
@@ -715,26 +539,18 @@ Live Telemetry: ${telemetry}
       if (ai) {
         try {
           const resp = await ai.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: [{ role: "user", parts: [{ text }] }],
-            config: {
-              systemInstruction: dynamicInstruction,
-              tools: liveTools as any,
-              toolConfig: { includeServerSideToolInvocations: true }
-            }
+            model: "gemini-2.5-flash",
+            contents: [{ role: 'user', parts: [{ text }] }],
+            config: { systemInstruction: dynamicInstruction, tools: liveTools as any, toolConfig: { includeServerSideToolInvocations: true } }
           });
-          responseText = resp.text || "";
+          responseText = resp.text || '';
           functionCalls = resp.functionCalls;
 
-          // Extract Google Search Grounding sources from live chat
           const groundingChunks = resp.candidates?.[0]?.groundingMetadata?.groundingChunks;
           if (Array.isArray(groundingChunks)) {
             for (const chunk of groundingChunks) {
               if (chunk?.web?.uri) {
-                webSources.push({
-                  title: chunk.web.title || new URL(chunk.web.uri).hostname,
-                  uri: chunk.web.uri
-                });
+                webSources.push({ title: chunk.web.title || new URL(chunk.web.uri).hostname, uri: chunk.web.uri });
               }
             }
           }
@@ -751,10 +567,7 @@ Live Telemetry: ${telemetry}
       }
 
       if (responseText) {
-        safeSend({ 
-          text: responseText,
-          sources: webSources.length > 0 ? webSources : undefined
-        });
+        safeSend({ text: responseText, sources: webSources.length > 0 ? webSources : undefined });
       } else if (webSources.length > 0) {
         safeSend({ sources: webSources });
       }
@@ -775,7 +588,7 @@ Live Telemetry: ${telemetry}
       clientInitData = initData || clientInitData;
       const ai = getGenAI(clientInitData?.apiKey);
       if (!ai) {
-        safeSend({ ready: true, status: 'copilot-ready', note: "Connected in high-speed automotive co-pilot mode" });
+        safeSend({ ready: true, status: 'copilot-ready', note: 'Connected in high-speed automotive co-pilot mode' });
         isConnecting = false;
         return;
       }
@@ -783,11 +596,11 @@ Live Telemetry: ${telemetry}
       try {
         const dynamicInstruction = buildSystemInstruction(clientInitData);
         const validVoices = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
-        const requestedVoice = (clientInitData?.voice && String(clientInitData.voice).trim()) || "Zephyr";
-        const voiceName = validVoices.includes(requestedVoice) ? requestedVoice : "Zephyr";
+        const requestedVoice = (clientInitData?.voice && String(clientInitData.voice).trim()) || 'Zephyr';
+        const voiceName = validVoices.includes(requestedVoice) ? requestedVoice : 'Zephyr';
 
         session = await ai.live.connect({
-          model: "gemini-3.8-live",
+          model: 'gemini-2.0-flash-live-001',
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
@@ -796,74 +609,7 @@ Live Telemetry: ${telemetry}
             outputAudioTranscription: {},
             inputAudioTranscription: {},
             systemInstruction: dynamicInstruction,
-            tools: [
-              {
-                functionDeclarations: [
-                  {
-                    name: "changeTab",
-                    description: "Change the current application tab",
-                    parameters: {
-                      type: Type.OBJECT,
-                      properties: {
-                        tab: { type: Type.STRING, enum: ["obd", "damage", "gps", "maintenance"], description: "Tab to switch to" }
-                      },
-                      required: ["tab"]
-                    }
-                  },
-                  {
-                    name: "setNavigation",
-                    description: "Set the navigation route from and to locations",
-                    parameters: {
-                      type: Type.OBJECT,
-                      properties: {
-                        from: { type: Type.STRING, description: "Starting location" },
-                        to: { type: Type.STRING, description: "Destination location" }
-                      },
-                      required: ["from", "to"]
-                    }
-                  },
-                  {
-                    name: "diagnoseVehicle",
-                    description: "Run an AI diagnostic check on the vehicle's current health",
-                    parameters: { type: Type.OBJECT, properties: {} }
-                  },
-                  {
-                    name: "toggleRecording",
-                    description: "Start or stop trip data recording",
-                    parameters: {
-                      type: Type.OBJECT,
-                      properties: {
-                        action: { type: Type.STRING, enum: ["start", "stop"], description: "Whether to start or stop recording" }
-                      },
-                      required: ["action"]
-                    }
-                  },
-                  {
-                    name: "toggleSimulation",
-                    description: "Toggle OBD-II vehicle simulation telemetry on or off",
-                    parameters: {
-                      type: Type.OBJECT,
-                      properties: {
-                        enabled: { type: Type.BOOLEAN, description: "Whether simulation should be turned on or off" }
-                      },
-                      required: ["enabled"]
-                    }
-                  },
-                  {
-                    name: "optimizeRoute",
-                    description: "Calculate and recommend an optimal low-wear route between New York locations",
-                    parameters: {
-                      type: Type.OBJECT,
-                      properties: {
-                        origin: { type: Type.STRING, description: "Starting location in New York" },
-                        destination: { type: Type.STRING, description: "Destination in New York" }
-                      },
-                      required: ["destination"]
-                    }
-                  }
-                ]
-              }
-            ]
+            tools: [{ functionDeclarations: [{ name: 'changeTab', description: 'Change the current application tab', parameters: { type: Type.OBJECT, properties: { tab: { type: Type.STRING, enum: ['obd','damage','gps','maintenance'], description: 'Tab to switch to' } }, required: ['tab'] } }, { name: 'setNavigation', description: 'Set the navigation route from and to locations', parameters: { type: Type.OBJECT, properties: { from: { type: Type.STRING, description: 'Starting location' }, to: { type: Type.STRING, description: 'Destination location' } }, required: ['from','to'] } }, { name: 'diagnoseVehicle', description: 'Run an AI diagnostic check on the vehicle\'s current health', parameters: { type: Type.OBJECT, properties: {} } }, { name: 'toggleRecording', description: 'Start or stop trip data recording', parameters: { type: Type.OBJECT, properties: { action: { type: Type.STRING, enum: ['start','stop'], description: 'Whether to start or stop recording' } }, required: ['action'] } }, { name: 'toggleSimulation', description: 'Toggle OBD-II vehicle simulation telemetry on or off', parameters: { type: Type.OBJECT, properties: { enabled: { type: Type.BOOLEAN, description: 'Whether simulation should be turned on or off' } }, required: ['enabled'] } }, { name: 'optimizeRoute', description: 'Calculate and recommend an optimal low-wear route between New York locations', parameters: { type: Type.OBJECT, properties: { origin: { type: Type.STRING, description: 'Starting location in New York' }, destination: { type: Type.STRING, description: 'Destination in New York' } }, required: ['destination'] } }] }]
           },
           callbacks: {
             onmessage: (message: LiveServerMessage) => {
@@ -875,8 +621,6 @@ Live Telemetry: ${telemetry}
               }
 
               const serverContent = message.serverContent as any;
-              
-              // Forward audio parts
               const parts = serverContent?.modelTurn?.parts;
               if (parts) {
                 for (const part of parts) {
@@ -888,8 +632,7 @@ Live Telemetry: ${telemetry}
                   }
                 }
               }
-              
-              // Forward user speech transcription if available
+
               const userParts = serverContent?.userTurn?.parts;
               if (userParts) {
                 for (const part of userParts) {
@@ -940,16 +683,15 @@ Live Telemetry: ${telemetry}
 
         safeSend({ ready: true, status: 'live-connected', voice: voiceName });
 
-        // Drain any buffered messages
         while (messageQueue.length > 0) {
           const item = messageQueue.shift();
           handleClientMessage(item);
         }
       } catch (err: any) {
-        const errorMsg = (err && typeof err === 'object' && err.message) ? err.message : "Upstream connection event";
+        const errorMsg = (err && typeof err === 'object' && err.message) ? err.message : 'Upstream connection event';
         console.log("[GeminiLive] Live API notice:", errorMsg);
         session = null;
-        safeSend({ ready: true, status: 'copilot-ready', note: "Connected in high-speed automotive co-pilot mode" });
+        safeSend({ ready: true, status: 'copilot-ready', note: 'Connected in high-speed automotive co-pilot mode' });
       } finally {
         isConnecting = false;
       }
@@ -961,10 +703,10 @@ Live Telemetry: ${telemetry}
           if (session) {
             try {
               session.sendRealtimeInput({
-                audio: { data: parsed.audio, mimeType: "audio/pcm;rate=16000" },
+                audio: { data: parsed.audio, mimeType: 'audio/pcm;rate=16000' },
               });
             } catch (err: any) {
-              console.log("Session sendRealtimeInput notice:", err?.message || "Send error");
+              console.log('Session sendRealtimeInput notice:', err?.message || 'Send error');
               session = null;
             }
           }
@@ -975,7 +717,7 @@ Live Telemetry: ${telemetry}
             try {
               session.sendToolResponse(parsed.toolResponse);
             } catch (err: any) {
-              console.log("Session sendToolResponse notice:", err?.message || "Tool response error");
+              console.log('Session sendToolResponse notice:', err?.message || 'Tool response error');
               session = null;
             }
           }
@@ -990,12 +732,7 @@ Live Telemetry: ${telemetry}
             pendingTextForTurn = currentText;
             try {
               session.sendClientContent({
-                turns: [
-                  {
-                    role: "user",
-                    parts: [{ text: currentText }],
-                  },
-                ],
+                turns: [{ role: 'user', parts: [{ text: currentText }] }],
                 turnComplete: true,
               });
               sentToLiveSession = true;
@@ -1003,7 +740,7 @@ Live Telemetry: ${telemetry}
               if (pendingResponseTimeout) clearTimeout(pendingResponseTimeout);
               pendingResponseTimeout = setTimeout(() => {
                 if (!turnHasReplied && pendingTextForTurn) {
-                  console.log("[GeminiLive] Live turn response timeout, invoking automotive copilot fallback...");
+                  console.log('[GeminiLive] Live turn response timeout, invoking automotive copilot fallback...');
                   session = null;
                   const t = pendingTextForTurn;
                   pendingTextForTurn = null;
@@ -1011,7 +748,7 @@ Live Telemetry: ${telemetry}
                 }
               }, 1800);
             } catch (err: any) {
-              console.log("Live session sendClientContent notice:", err?.message || "Content error");
+              console.log('Live session sendClientContent notice:', err?.message || 'Content error');
               session = null;
               sentToLiveSession = false;
             }
@@ -1022,11 +759,11 @@ Live Telemetry: ${telemetry}
           }
         }
       } catch (err: any) {
-        console.log("Live API WS message send notice:", err?.message || "Send error");
+        console.log('Live API WS message send notice:', err?.message || 'Send error');
       }
     };
 
-    clientWs.on("message", (data) => {
+    clientWs.on('message', (data) => {
       try {
         const parsed = JSON.parse(data.toString());
         if (parsed.type === 'init') {
@@ -1043,18 +780,17 @@ Live Telemetry: ${telemetry}
           handleClientMessage(parsed);
         }
       } catch (err: any) {
-        console.log("Live API WS message parse notice:", err?.message || "Parse error");
+        console.log('Live API WS message parse notice:', err?.message || 'Parse error');
       }
     });
 
-    // Fallback: if no init message sent within 500ms, start session anyway
     initTimeout = setTimeout(() => {
       if (!session && !isConnecting) {
         setupSession();
       }
     }, 500);
 
-    clientWs.on("close", () => {
+    clientWs.on('close', () => {
       if (initTimeout) clearTimeout(initTimeout);
       if (pendingResponseTimeout) clearTimeout(pendingResponseTimeout);
       if (session) {
@@ -1074,11 +810,9 @@ Live Telemetry: ${telemetry}
             }
           }
           s.close?.();
-        } catch (closeErr) {
-          // ignore
-        }
+        } catch (closeErr) {}
       }
-      console.log("Client disconnected from /live");
+      console.log('Client disconnected from /live');
     });
   });
 }

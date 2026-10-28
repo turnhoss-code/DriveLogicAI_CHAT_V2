@@ -7,20 +7,20 @@ services:
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
-    healthCheckPath: /
-    domains:
-      - drivelogicai.ai.studio
+    healthCheckPath: /api/keytest
     autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: 3000
+        value: "3000"
+      - key: APP_URL
+        value: https://drivelogicai.ai.studio
       - key: GEMINI_API_KEY
         sync: false
-      - key: VITE_MAPS_API_KEY
-        sync: false
       - key: GOOGLE_MAPS_PLATFORM_KEY
+        sync: false
+      - key: VITE_MAPS_API_KEY
         sync: false
       - key: google-site-verification
         sync: false
