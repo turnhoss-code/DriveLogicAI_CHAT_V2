@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { WebSocketServer, WebSocket } from "ws";
-import { GoogleGenAI, LiveServerMessage, Modality, Type, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI, LiveServerMessage, Modality, Type } from "@google/genai";
 import dotenv from "dotenv";
 dotenv.config({ override: true });
 
@@ -79,7 +79,7 @@ function handleAutomotiveCommandFallback(text: string, contextData: any) {
   const isRecording = Boolean(contextData?.isRecording);
 
   if (lower.includes('best route') || lower.includes('recommend route') || lower.includes('route optimization') || lower.includes('optimize route') || lower.includes('which route') || lower.includes('route')) {
-    return { 
+    return {
       text: "Based on historical trip logs, vehicle damage scores, and highway distance, the optimal route in New York is via smooth Parkway and Thruway corridors (e.g., I-87 or I-90). This route minimizes harsh braking and wear.",
       functionCalls: [{ name: 'optimizeRoute', args: { origin: 'Current Location', destination: 'JFK Airport, NY' } }]
     };
@@ -188,13 +188,12 @@ async function startServer() {
         systemInstruction = `You are a high-speed vehicle telemetry and OBD-II copilot. Deliver instantaneous, clear, concise answers about current speed, engine metrics, and trip status.`;
       }
 
-      let formattedHistory = [];
-      if (history && Array.isArray(history)) {
-        formattedHistory = history.map((msg: any) => ({
-          role: msg.sender === 'user' ? 'user' : 'model',
-          parts: [{ text: msg.text }]
-        }));
-      }
+      const formattedHistory = Array.isArray(history)
+        ? history.map((msg: any) => ({
+            role: msg.sender === 'user' ? 'user' : 'model',
+            parts: [{ text: msg.text }]
+          }))
+        : [];
       formattedHistory.push({ role: 'user', parts: [{ text }] });
 
       let responseText = '';
@@ -236,209 +235,6 @@ async function startServer() {
     }
   });
 
-  app.post("/api/gemini/chat", async (req, res) => {
-    const customApiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
-    const { message, history, modelType, role, useSearch, useMaps } = req.body;
-    const model = modelType || "gemini-2.5-flash";
-
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Transfer-Encoding", "chunked");
-
-    let systemInstruction = "You are DriveLogic AI Co-Pilot, an intelligent automotive assistant.";
-    if (role === "Mechanic") {
-      systemInstruction = "You are a Master Automotive Mechanic. Explain mechanical issues, OBD-II diagnostic trouble codes, vehicle systems, and maintenance protocols with precision and practicality.";
-    } else if (role === "Navigator") {
-      systemInstruction = "You are a Route and Navigation Specialist. Provide optimal routes, lane recommendations, traffic guidance, and wear-reducing driving strategies.";
-    }
-
-    const tools: any[] = [];
-    if (useSearch !== false) {
-      tools.push({ googleSearch: {} });
-    }
-
-    try {
-      const ai = getGenAI(customApiKey);
-      if (!ai) {
-        res.write("DriveLogic Co-Pilot: AI services are currently operating in local automotive mode. You can check OBD-II diagnostics, GPS navigation, and maintenance logs directly from the dashboard.");
-        return res.end();
-      }
-
-      let formattedHistory: any[] = [];
-      if (Array.isArray(history)) {
-        formattedHistory = history
-          .filter((m: any) => m && m.text && m.text.trim())
-          .map((m: any) => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: String(m.text) }] }));
-      }
-      formattedHistory.push({ role: 'user', parts: [{ text: String(message) }] });
-
-      const stream = await ai.models.generateContentStream({
-        model,
-        contents: formattedHistory,
-        config: {
-          systemInstruction,
-          ...(tools.length > 0 ? { tools } : {})
-        }
-      });
-
-      for await (const chunk of stream) {
-        if (chunk.text) {
-          res.write(chunk.text);
-        }
-      }
-      res.end();
-    } catch (err: any) {
-      console.warn("[/api/gemini/chat stream error]:", err?.message || err);
-      res.write(`DriveLogic Co-pilot: ${handleAutomotiveCommandFallback(String(message), {}).text}`);
-      res.end();
-    }
-  });
-
-  app.post("/api/v1/analyze", async (req, res) => {
-    const customApiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
-    const { data, sensorHistory, vehicleModel } = req.body;
-
-    const rpm = data?.rpm || 0;
-    const speed = data?.speed || 0;
-    const coolantTemp = data?.coolantTemp || 0;
-    const load = data?.load || 0;
-    const throttlePos = data?.throttlePos || 0;
-    const voltage = data?.voltage || 12.0;
-    const dtcs = data?.dtcs || [];
-
-    const fallbackAnalysis = `### Vehicle Health & Telemetry Diagnostic Report
-- **Overall Health Index**: ${dtcs.length > 0 ? '72%' : '94%'} (Normal Operating Parameters)
-- **Engine System**: RPM ${rpm}, Load ${load.toFixed(1)}%, Coolant Temp ${Math.round((coolantTemp * 9/5) + 32)}°F — Running within calibrated tolerances.
-- **Electrical & Battery**: ${voltage.toFixed(2)}V charging system output stable.
-- **Active Trouble Codes**: ${dtcs.length > 0 ? dtcs.join(', ') : 'No pending or active DTCs detected'}.
-- **Recommendations**: Continue regular maintenance and monitoring of tire pressures and fluid levels for NY highway driving conditions.`;
-
-    try {
-      const ai = getGenAI(customApiKey);
-      if (!ai) {
-        return res.json({ text: fallbackAnalysis });
-      }
-
-      const model = "gemini-2.5-flash";
-      const vehicleContext = vehicleModel ? `Vehicle Model: ${vehicleModel}` : `Vehicle Model: Unknown`;
-      const sensorContext = sensorHistory && sensorHistory.length > 0
-        ? `Recent Sensor Activity (last 60s):
-           - Peak Acceleration: ${Math.max(...sensorHistory.map((h: any) => h.accel)).toFixed(2)}G
-           - Peak Rotation Rate: ${Math.max(...sensorHistory.map((h: any) => h.gyro)).toFixed(2)} deg/s
-           - Average Vibration Level: ${(sensorHistory.reduce((acc: number, h: any) => acc + h.accel, 0) / sensorHistory.length).toFixed(3)}G`
-        : "No recent sensor data available.";
-
-      const prompt = `You are an automotive diagnostic specialist.
-Analyze the following high-fidelity telemetry to provide a diagnostic report with 99% accuracy.
-
-${vehicleContext}
-OBD-II LIVE DATA:
-- RPM: ${rpm}
-- Speed: ${Math.round(speed * 0.621371)} mph
-- Engine Coolant Temperature: ${Math.round((coolantTemp * 9/5) + 32)} °F
-- Calculated Engine Load: ${load.toFixed(1)}%
-- Throttle Position: ${throttlePos.toFixed(1)}%
-- Battery System Voltage: ${voltage.toFixed(2)}V
-- Active DTCs: ${dtcs.length > 0 ? dtcs.join(', ') : 'None detected'}
-
-IMU SENSOR DATA (Smartphone Accelerometer/Gyro):
-${sensorContext}
-
-TASK:
-1. Provide a "Vehicle Health Index" (0-100%).
-2. Perform a "System Check" on Engine, Battery, and Driving Behavior.
-3. Correlate OBD data with Sensor data.
-4. Offer specific actionable maintenance advice if needed.
-
-Keep the tone professional, technical yet accessible, and concise. Use Markdown.`;
-
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }]
-        }
-      });
-      res.json({ text: response.text || fallbackAnalysis });
-    } catch (e: any) {
-      console.warn("[Analyze Fallback]:", e?.message || e);
-      res.json({ text: fallbackAnalysis });
-    }
-  });
-
-  app.post("/api/v1/explain-dtc", async (req, res) => {
-    const customApiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
-    const { code } = req.body;
-
-    const defaultExplanations: Record<string, string> = {
-      'P0300': 'Random/Multiple Cylinder Misfire Detected. Likely causes: faulty spark plugs, ignition coils, vacuum leak, or low fuel pressure. Recommended action: inspect spark plugs and test fuel pressure.',
-      'P0420': 'Catalyst System Efficiency Below Threshold (Bank 1). Likely causes: failing catalytic converter, exhaust leak, or faulty downstream oxygen sensor. Recommended action: inspect exhaust for leaks and verify oxygen sensor health.',
-      'P0171': 'System Too Lean (Bank 1). Likely causes: dirty Mass Air Flow (MAF) sensor, vacuum leak, or clogged fuel injectors. Recommended action: check intake boots for leaks and clean MAF sensor.',
-      'P0128': 'Coolant Thermostat (Coolant Temperature Below Thermostat Regulating Temperature). Likely causes: stuck-open thermostat or faulty ECT sensor. Recommended action: replace engine thermostat.',
-    };
-
-    const fallback = defaultExplanations[code] || `OBD-II Code ${code}: Powertrain diagnostic trouble code indicating a detected subsystem anomaly. Recommended action: verify electrical wiring harness and sensor live stream parameters.`;
-
-    try {
-      const ai = getGenAI(customApiKey);
-      if (!ai) {
-        return res.json({ text: fallback });
-      }
-
-      const model = "gemini-2.5-flash";
-      const prompt = `You are an expert automotive diagnostics AI. Provide a concise, plain English explanation of the OBD-II Diagnostic Trouble Code (DTC) ${code}. Include the likely causes and recommended next steps.`;
-
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }]
-        }
-      });
-      res.json({ text: response.text || fallback });
-    } catch (e: any) {
-      console.warn("[DTC Fallback]:", e?.message || e);
-      res.json({ text: fallback });
-    }
-  });
-
-  app.post("/api/v1/route-opt", async (req, res) => {
-    const customApiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
-    const { trips } = req.body;
-    if (!trips || trips.length < 2) return res.json({ text: "Not enough trip data for recommendations." });
-
-    const fallbackOpt = `### NY State Driving Route Optimization
-- **Recommended Route Strategy**: Favor smooth parkway and highway corridors (e.g. I-87, Taconic State Pkwy, I-90 Thruway) during off-peak hours to minimize stop-and-go braking.
-- **Wear Reduction Tip**: Steady cruising reduces brake pad heat cycling and drivetrain stress by up to 25%. Maintain gradual throttle inputs when merging.`;
-
-    try {
-      const ai = getGenAI(customApiKey);
-      if (!ai) {
-        return res.json({ text: fallbackOpt });
-      }
-
-      const model = "gemini-2.5-flash";
-      const tripSummary = trips.map((t: any) => ({
-        damage: t.averageDamageScore,
-        distance: t.distance,
-        events: t?.events?.length || 0
-      }));
-
-      const prompt = `You are an automotive route optimisation AI. Use trip logs in conjunction with OBD2 data and stored historical data of the user combined with web data to diagnose the vehicle and recommend the best route in New York State. Trips: ${JSON.stringify(tripSummary)}. Recommend the best route and explain why briefly in under 150 words. Focus on reducing vehicle stress, harsh braking, and damage scores in New York State corridors.`;
-
-      const response = await ai.models.generateContent({
-        model,
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }]
-        }
-      });
-      res.json({ text: response.text || fallbackOpt });
-    } catch (e: any) {
-      console.warn("[Route Opt Fallback]:", e?.message || e);
-      res.json({ text: fallbackOpt });
-    }
-  });
-
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -448,7 +244,8 @@ Keep the tone professional, technical yet accessible, and concise. Use Markdown.
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.use((req, res) => {
+    app.use((req, res, next) => {
+      if (req.path.startsWith('/api')) return next();
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
