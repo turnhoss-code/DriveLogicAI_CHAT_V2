@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Activity, History, AlertTriangle, ChevronRight, Clock, MapPin, ChevronDown, Download, Key, Check, FileSpreadsheet, FileCode } from 'lucide-react';
+import { Activity, History, AlertTriangle, ChevronRight, Clock, MapPin, ChevronDown, Download, Key, Check, FileSpreadsheet, FileCode, GitCompare } from 'lucide-react';
 import { DamagePoint, Trip, SensorPoint } from '../types';
 import { LineChart, Line, ResponsiveContainer, YAxis, XAxis, Tooltip, AreaChart, Area } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
@@ -8,6 +8,7 @@ import { GoogleMap, Polyline, Marker, InfoWindow } from '@react-google-maps/api'
 import TripTimelineDetails from './TripTimelineDetails';
 import { TripSummaryCard } from './TripSummaryCard';
 import { exportTripAsJSON, exportTripAsCSV } from '../lib/tripExporter';
+import TripComparisonView from './TripComparisonView';
 
 interface DamageLogTabProps {
   score: number;
@@ -68,6 +69,7 @@ export default function DamageLogTab({
   googleAccessToken,
   onLinkDrive 
 }: DamageLogTabProps) {
+  const [viewMode, setViewMode] = useState<'history' | 'compare'>('history');
   const [expandedTripId, setExpandedTripId] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<{ type: string, timestamp: number, lat: number, lng: number } | null>(null);
   const [newMarkerPos, setNewMarkerPos] = useState<{ lat: number, lng: number } | null>(null);
@@ -526,139 +528,168 @@ export default function DamageLogTab({
         </div>
       </div>
 
-      {/* Trip History */}
+      {/* Trip History & Comparison */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between px-2">
-          <h3 className="font-bold flex items-center gap-2">
-            <History size={18} className="text-car-accent" />
-            Trip History
-          </h3>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 px-2">
+          <div className="flex items-center gap-1 p-1 bg-white/5 rounded-2xl border border-white/5 text-xs font-mono">
+            <button
+              type="button"
+              onClick={() => setViewMode('history')}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer font-bold",
+                viewMode === 'history' 
+                  ? "bg-car-accent text-white shadow-md shadow-car-accent/20" 
+                  : "text-white/60 hover:text-white"
+              )}
+            >
+              <History size={14} />
+              <span>Trip Logs ({trips.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('compare')}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer font-bold",
+                viewMode === 'compare' 
+                  ? "bg-car-accent text-white shadow-md shadow-car-accent/20" 
+                  : "text-white/60 hover:text-white"
+              )}
+            >
+              <GitCompare size={14} />
+              <span>Trip Comparison</span>
+            </button>
+          </div>
+
           <div className="flex items-center gap-3">
-            <span className="text-[10px] text-white/40 font-mono uppercase">{trips.length} Recorded</span>
-            {trips.length > 0 && (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={exportAllTrips}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-xl text-[10px] uppercase tracking-wider text-white/60 hover:text-white transition-all border border-white/5 hover:border-white/10 cursor-pointer"
-                  title="Export all trips as JSON"
-                >
-                  <Download size={12} />
-                  Export All
-                </button>
-              </div>
+            {trips.length > 0 && viewMode === 'history' && (
+              <button
+                onClick={exportAllTrips}
+                className="flex items-center gap-1 px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-xl text-[10px] uppercase tracking-wider text-white/60 hover:text-white transition-all border border-white/5 hover:border-white/10 cursor-pointer"
+                title="Export all trips as JSON"
+              >
+                <Download size={12} />
+                Export All
+              </button>
             )}
           </div>
         </div>
 
-        <div className="space-y-3">
-          {trips.length === 0 ? (
-            <div className="glass-card p-8 rounded-2xl text-center">
-              <p className="text-xs text-white/40 italic">No trips recorded yet. Start a trip to begin logging data.</p>
-            </div>
-          ) : (
-            trips.map((trip) => {
-              const details = getScoreDetails(trip.averageDamageScore);
-              return (
-              <motion.div
-                key={trip.id}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                onClick={() => setExpandedTripId(expandedTripId === trip.id ? null : trip.id)}
-                className={cn(
-                  "p-4 rounded-2xl flex flex-col group cursor-pointer transition-all duration-300 border backdrop-blur-md",
-                  expandedTripId === trip.id ? `bg-black/60 ${details.border}` : `bg-black/40 border-white/5 hover:border-white/20`
-                )}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className={cn(
-                      "w-12 h-12 rounded-2xl flex items-center justify-center shadow-inner",
-                      details.bg, details.color
-                    )}>
-                      <Activity size={24} />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-white/90">
-                          {new Date(trip.startTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                        </span>
-                        <span className="text-[10px] text-white/40 font-mono bg-white/5 px-2 py-0.5 rounded-full">
-                          {new Date(trip.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-4 mt-2">
-                        <div className="flex items-center gap-1.5 text-[10px] text-white/60 font-mono">
-                          <Clock size={12} className="text-car-accent" />
-                          {Math.round((trip.endTime! - trip.startTime) / 60000)} MIN
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[10px] text-white/60 font-mono">
-                          <MapPin size={12} className="text-car-cyan" />
-                          {trip.distance.toFixed(1)} MI
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[10px] text-white/60 font-mono">
-                          <AlertTriangle size={12} className={trip.events.length > 0 ? "text-car-warning" : "text-white/20"} />
-                          {trip.events.length} EVT
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={(e) => handleExportCSV(trip, e)}
-                      className="px-2 py-1.5 bg-white/5 hover:bg-emerald-500/20 text-white/50 hover:text-emerald-300 rounded-lg border border-white/10 hover:border-emerald-500/30 transition-colors text-[10px] font-mono flex items-center gap-1"
-                      title="Export waypoints and events as CSV"
-                    >
-                      <FileSpreadsheet size={13} className="text-emerald-400" />
-                      <span>CSV</span>
-                    </button>
-                    <button
-                      onClick={(e) => handleExportJSON(trip, e)}
-                      className="px-2 py-1.5 bg-white/5 hover:bg-sky-500/20 text-white/50 hover:text-sky-300 rounded-lg border border-white/10 hover:border-sky-500/30 transition-colors text-[10px] font-mono flex items-center gap-1"
-                      title="Export full trip telemetry as JSON"
-                    >
-                      <FileCode size={13} className="text-sky-400" />
-                      <span>JSON</span>
-                    </button>
-                    <div className="text-right flex flex-col items-end ml-1">
-                      <div className={cn("text-lg font-bold font-mono leading-none", details.color)}>
-                        {Math.round(trip.averageDamageScore)}
-                      </div>
-                      <div className="text-[8px] text-white/40 uppercase tracking-widest mt-1">Avg Score</div>
-                    </div>
-                    <div className={cn("p-1 rounded-full transition-colors", expandedTripId === trip.id ? "bg-white/10" : "")}>
-                      {expandedTripId === trip.id ? (
-                        <ChevronDown size={20} className="text-white" />
-                      ) : (
-                        <ChevronRight size={20} className="text-white/40 group-hover:text-white" />
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <AnimatePresence>
-                  {expandedTripId === trip.id && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="mt-4 pt-4 border-t border-white/5 space-y-4">
-                        <TripSummaryCard trip={trip} />
-                        <TripTimelineDetails
-                          trip={trip}
-                          mapsApiKey={mapsApiKey}
-                          isLoaded={isLoaded}
-                        />
-                      </div>
-                    </motion.div>
+        {viewMode === 'compare' ? (
+          <TripComparisonView
+            trips={trips}
+            mapsApiKey={mapsApiKey}
+            isLoaded={isLoaded}
+          />
+        ) : (
+          <div className="space-y-3">
+            {trips.length === 0 ? (
+              <div className="glass-card p-8 rounded-2xl text-center">
+                <p className="text-xs text-white/40 italic">No trips recorded yet. Start a trip to begin logging data.</p>
+              </div>
+            ) : (
+              trips.map((trip) => {
+                const details = getScoreDetails(trip.averageDamageScore);
+                return (
+                <motion.div
+                  key={trip.id}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  onClick={() => setExpandedTripId(expandedTripId === trip.id ? null : trip.id)}
+                  className={cn(
+                    "p-4 rounded-2xl flex flex-col group cursor-pointer transition-all duration-300 border backdrop-blur-md",
+                    expandedTripId === trip.id ? `bg-black/60 ${details.border}` : `bg-black/40 border-white/5 hover:border-white/20`
                   )}
-                </AnimatePresence>
-              </motion.div>
-            );
-          })
-          )}
-        </div>
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className={cn(
+                        "w-12 h-12 rounded-2xl flex items-center justify-center shadow-inner",
+                        details.bg, details.color
+                      )}>
+                        <Activity size={24} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm text-white/90">
+                            {new Date(trip.startTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </span>
+                          <span className="text-[10px] text-white/40 font-mono bg-white/5 px-2 py-0.5 rounded-full">
+                            {new Date(trip.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-4 mt-2">
+                          <div className="flex items-center gap-1.5 text-[10px] text-white/60 font-mono">
+                            <Clock size={12} className="text-car-accent" />
+                            {Math.round((trip.endTime! - trip.startTime) / 60000)} MIN
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-white/60 font-mono">
+                            <MapPin size={12} className="text-car-cyan" />
+                            {trip.distance.toFixed(1)} MI
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-white/60 font-mono">
+                            <AlertTriangle size={12} className={trip.events.length > 0 ? "text-car-warning" : "text-white/20"} />
+                            {trip.events.length} EVT
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => handleExportCSV(trip, e)}
+                        className="px-2 py-1.5 bg-white/5 hover:bg-emerald-500/20 text-white/50 hover:text-emerald-300 rounded-lg border border-white/10 hover:border-emerald-500/30 transition-colors text-[10px] font-mono flex items-center gap-1"
+                        title="Export waypoints and events as CSV"
+                      >
+                        <FileSpreadsheet size={13} className="text-emerald-400" />
+                        <span>CSV</span>
+                      </button>
+                      <button
+                        onClick={(e) => handleExportJSON(trip, e)}
+                        className="px-2 py-1.5 bg-white/5 hover:bg-sky-500/20 text-white/50 hover:text-sky-300 rounded-lg border border-white/10 hover:border-sky-500/30 transition-colors text-[10px] font-mono flex items-center gap-1"
+                        title="Export full trip telemetry as JSON"
+                      >
+                        <FileCode size={13} className="text-sky-400" />
+                        <span>JSON</span>
+                      </button>
+                      <div className="text-right flex flex-col items-end ml-1">
+                        <div className={cn("text-lg font-bold font-mono leading-none", details.color)}>
+                          {Math.round(trip.averageDamageScore)}
+                        </div>
+                        <div className="text-[8px] text-white/40 uppercase tracking-widest mt-1">Avg Score</div>
+                      </div>
+                      <div className={cn("p-1 rounded-full transition-colors", expandedTripId === trip.id ? "bg-white/10" : "")}>
+                        {expandedTripId === trip.id ? (
+                          <ChevronDown size={20} className="text-white" />
+                        ) : (
+                          <ChevronRight size={20} className="text-white/40 group-hover:text-white" />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <AnimatePresence>
+                    {expandedTripId === trip.id && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="mt-4 pt-4 border-t border-white/5 space-y-4">
+                          <TripSummaryCard trip={trip} />
+                          <TripTimelineDetails
+                            trip={trip}
+                            mapsApiKey={mapsApiKey}
+                            isLoaded={isLoaded}
+                          />
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              );
+            })
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

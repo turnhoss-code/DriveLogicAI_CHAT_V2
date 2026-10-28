@@ -208,14 +208,87 @@ ${diagnosis}
   const speedMph = Math.round(data.speed * 0.621371);
   const coolantF = Math.round((data.coolantTemp * 9 / 5) + 32);
 
+  const rpmPercent = Math.min(100, Math.max(0, (data.rpm / 7500) * 100));
+  const rpmBarColor = data.rpm > 6500 
+    ? 'bg-gradient-to-r from-amber-500 to-rose-500 shadow-rose-500/50 shadow-sm' 
+    : data.rpm > 5000 
+      ? 'bg-gradient-to-r from-car-accent to-amber-500' 
+      : 'bg-gradient-to-r from-blue-500 to-cyan-400';
+
+  const speedPercent = Math.min(100, Math.max(0, (speedMph / 140) * 100));
+  const coolantPercent = Math.min(100, Math.max(0, ((coolantF - 100) / 160) * 100));
+  const throttlePercent = Math.min(100, Math.max(0, data.throttlePos));
+  const loadPercent = Math.min(100, Math.max(0, data.load));
+  const voltagePercent = Math.min(100, Math.max(0, ((data.voltage - 10) / 5) * 100));
+
   const metrics = [
-    { label: 'RPM', value: data.rpm, unit: '', icon: Gauge, color: 'text-car-accent' },
-    { label: 'Speed', value: speedMph, unit: 'mph', icon: Zap, color: 'text-car-success' },
-    { label: 'VSS', value: speedMph, unit: 'mph', icon: Activity, color: 'text-car-success' },
-    { label: 'Coolant', value: coolantF, unit: '°F', icon: Thermometer, color: coolantF > 221 ? 'text-car-danger' : 'text-car-warning' },
-    { label: 'Throttle', value: data.throttlePos.toFixed(1), unit: '%', icon: Activity, color: 'text-white' },
-    { label: 'Load', value: data.load.toFixed(1), unit: '%', icon: Activity, color: 'text-white' },
-    { label: 'Voltage', value: data.voltage.toFixed(1), unit: 'V', icon: Zap, color: 'text-car-accent' },
+    { 
+      label: 'RPM', 
+      value: data.rpm, 
+      unit: '', 
+      icon: Gauge, 
+      color: 'text-car-accent',
+      percent: rpmPercent,
+      barColor: rpmBarColor,
+      minLabel: '0',
+      maxLabel: '7.5k'
+    },
+    { 
+      label: 'Speed', 
+      value: speedMph, 
+      unit: 'mph', 
+      icon: Zap, 
+      color: 'text-car-success',
+      percent: speedPercent,
+      barColor: 'bg-gradient-to-r from-emerald-500 to-teal-400',
+      minLabel: '0',
+      maxLabel: '140'
+    },
+    { 
+      label: 'VSS', 
+      value: speedMph, 
+      unit: 'mph', 
+      icon: Activity, 
+      color: 'text-car-success',
+      percent: speedPercent,
+      barColor: 'bg-emerald-500'
+    },
+    { 
+      label: 'Coolant', 
+      value: coolantF, 
+      unit: '°F', 
+      icon: Thermometer, 
+      color: coolantF > 221 ? 'text-car-danger' : 'text-car-warning',
+      percent: coolantPercent,
+      barColor: coolantF > 221 ? 'bg-rose-500' : coolantF > 200 ? 'bg-amber-400' : 'bg-sky-400'
+    },
+    { 
+      label: 'Throttle', 
+      value: data.throttlePos.toFixed(1), 
+      unit: '%', 
+      icon: Activity, 
+      color: 'text-white',
+      percent: throttlePercent,
+      barColor: 'bg-indigo-400'
+    },
+    { 
+      label: 'Load', 
+      value: data.load.toFixed(1), 
+      unit: '%', 
+      icon: Activity, 
+      color: 'text-white',
+      percent: loadPercent,
+      barColor: data.load > 85 ? 'bg-amber-500' : 'bg-purple-400'
+    },
+    { 
+      label: 'Voltage', 
+      value: data.voltage.toFixed(1), 
+      unit: 'V', 
+      icon: Zap, 
+      color: 'text-car-accent',
+      percent: voltagePercent,
+      barColor: data.voltage < 11.8 ? 'bg-rose-500' : data.voltage > 14.8 ? 'bg-amber-400' : 'bg-cyan-400'
+    },
   ];
 
   const chartData = history.map(d => ({
@@ -400,6 +473,23 @@ ${diagnosis}
               <span className="text-xs text-white/20 font-mono uppercase">{m.unit}</span>
             </div>
             <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-white/40">{m.label}</span>
+
+            {/* Framer-Motion Animated Gauge Telemetry Bar */}
+            <div className="w-full mt-2 space-y-1">
+              <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden p-[1px] border border-white/10 relative">
+                <motion.div
+                  className={cn("h-full rounded-full transition-colors", m.barColor)}
+                  initial={false}
+                  animate={{ width: `${m.percent}%` }}
+                  transition={{ type: "spring", stiffness: 90, damping: 18, mass: 0.6 }}
+                />
+              </div>
+              <div className="flex justify-between items-center text-[8px] font-mono text-white/30 px-0.5">
+                <span>{m.minLabel}</span>
+                <span className="text-white/40 font-semibold">{Math.round(m.percent)}%</span>
+                <span>{m.maxLabel}</span>
+              </div>
+            </div>
           </div>
         ))}
       </div>
@@ -519,14 +609,32 @@ ${diagnosis}
       {/* Secondary Metrics Grid */}
       <div className="grid grid-cols-2 gap-4">
         {metrics.slice(2).map((m) => (
-          <div key={m.label} className="glass-card p-4 rounded-2xl flex flex-col gap-2">
-            <div className="flex justify-between items-center">
-              <m.icon size={16} className="text-white/20" />
-              <span className="text-[10px] font-mono uppercase tracking-widest text-white/40">{m.label}</span>
+          <div key={m.label} className="glass-card p-4 rounded-2xl flex flex-col justify-between gap-3">
+            <div>
+              <div className="flex justify-between items-center">
+                <m.icon size={16} className="text-white/20" />
+                <span className="text-[10px] font-mono uppercase tracking-widest text-white/40">{m.label}</span>
+              </div>
+              <div className="flex items-baseline gap-1 mt-1">
+                <span className={`text-2xl font-bold font-mono ${m.color}`}>{m.value}</span>
+                <span className="text-[10px] text-white/20 font-mono">{m.unit}</span>
+              </div>
             </div>
-            <div className="flex items-baseline gap-1">
-              <span className={`text-2xl font-bold font-mono ${m.color}`}>{m.value}</span>
-              <span className="text-[10px] text-white/20 font-mono">{m.unit}</span>
+
+            {/* Framer-Motion Animated Telemetry Bar */}
+            <div className="space-y-1">
+              <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden border border-white/5 relative">
+                <motion.div
+                  className={cn("h-full rounded-full transition-colors", m.barColor || "bg-car-accent")}
+                  initial={false}
+                  animate={{ width: `${m.percent}%` }}
+                  transition={{ type: "spring", stiffness: 100, damping: 20, mass: 0.5 }}
+                />
+              </div>
+              <div className="flex justify-between items-center text-[7px] font-mono text-white/30">
+                <span>0</span>
+                <span>{Math.round(m.percent)}%</span>
+              </div>
             </div>
           </div>
         ))}
