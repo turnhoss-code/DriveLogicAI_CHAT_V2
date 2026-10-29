@@ -18,34 +18,40 @@ android {
         versionCode 34
         // Public version string shown to users
         versionName "2.33"
-        
+
         // Specifies the runner used for instrumented tests
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        
+
         aaptOptions {
-             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+            // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
-    
+
     signingConfigs {
         release {
-            storeFile file("release-key.jks")
-            storePassword "MakersMarka7a8\$\$\$"
-            keyAlias "drivelogicai_key"
-            keyPassword "MakersMarka7a8\$\$\$"
+            def keystoreFile = file("release-key.jks")
+            if (keystoreFile.exists()) {
+                storeFile keystoreFile
+                storePassword System.getenv("KEY_STORE_PASSWORD") ?: ""
+                keyAlias System.getenv("KEY_ALIAS") ?: ""
+                keyPassword System.getenv("KEY_PASSWORD") ?: ""
+            }
         }
     }
-    
+
     buildTypes {
         release {
             // Disables code shrinking, obfuscation, and optimization for the release build type
             minifyEnabled false
             // Defines the ProGuard rule files to be applied if minifyEnabled is set to true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            // Apply the release signing configuration
-            signingConfig signingConfigs.release
+            // Apply the release signing configuration only when the keystore is present.
+            // CI provides the signing values via injected Gradle properties; local builds can run without them.
+            if (signingConfigs.release.storeFile != null && signingConfigs.release.storeFile.exists()) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 
@@ -65,23 +71,23 @@ repositories {
 dependencies {
     // Includes all JAR files in the 'libs' directory as dependencies
     implementation fileTree(include: ['*.jar'], dir: 'libs')
-    
+
     // AndroidX dependencies for UI and core functionality
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
-    
+
     // Google Mobile Ads SDK (AdMob)
     implementation 'com.google.android.gms:play-services-ads:24.4.0'
-    
+
     // Capacitor core dependency
     implementation project(':capacitor-android')
-    
+
     // Testing dependencies
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
-    
+
     // Capacitor Cordova plugins dependency
     implementation project(':capacitor-cordova-android-plugins')
 }
