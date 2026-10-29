@@ -15,10 +15,10 @@ concurrency:
 
 env:
   NODE_VERSION: '20'
-  JAVA_VERSION: '17'
-  ANDROID_COMPILE_SDK: '34'
-  ANDROID_TARGET_SDK: '34'
-  ANDROID_MIN_SDK: '22'
+  JAVA_VERSION: '24.0.0'
+  ANDROID_COMPILE_SDK: '36'
+  ANDROID_TARGET_SDK: '36'
+  ANDROID_MIN_SDK: '24'
 
 jobs:
   # ─────────────────────────────────────────────────────────────
