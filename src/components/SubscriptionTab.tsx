@@ -85,23 +85,23 @@ export default function SubscriptionTab() {
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 max-w-6xl mx-auto px-2 sm:px-4 pb-20">
+    <div className="space-y-8 animate-in fade-in duration-500 max-w-4xl mx-auto pb-20">
       
       {/* Header */}
       <div className="text-center space-y-3">
         <h2 className="text-2xl font-bold text-white tracking-tight">Unlock Professional Capabilities</h2>
-        <p className="text-white/60 text-sm max-w-2xl mx-auto leading-relaxed">
+        <p className="text-white/60 text-sm max-w-xl mx-auto leading-relaxed">
           Get access to manufacturer-specific OBD-II protocols, advanced AI diagnostics, and unlimited cloud features.
         </p>
       </div>
 
       {/* Subscription Pricing Grid */}
-      <div className="grid md:grid-cols-3 gap-6 lg:gap-8 items-stretch">
+      <div className="grid md:grid-cols-3 gap-6">
         {SUBSCRIPTION_TIERS.map((tier) => (
           <div 
             key={tier.id}
             className={cn(
-              "relative rounded-3xl p-7 lg:p-8 glass-card flex flex-col justify-between border-2 transition-all duration-300 hover:-translate-y-1 w-full",
+              "relative rounded-3xl p-6 glass-card flex flex-col justify-between border-2 transition-all duration-300 hover:-translate-y-1",
               tier.recommended ? 'border-car-accent shadow-xl shadow-car-accent/10' : 'border-transparent hover:border-white/10'
             )}
           >
@@ -122,13 +122,13 @@ export default function SubscriptionTab() {
                 </div>
               </div>
 
-              <div className="space-y-3.5 pt-5 border-t border-white/5">
+              <div className="space-y-3 pt-4 border-t border-white/5">
                 {tier.features.map((feature, i) => (
                   <div key={i} className="flex items-start gap-3">
-                    <div className={cn("p-1.5 rounded-full shrink-0 mt-0.5", tier.bg)}>
-                      <Check size={11} className={tier.color} />
+                    <div className={cn("p-1 rounded-full shrink-0 mt-0.5", tier.bg)}>
+                      <Check size={10} className={tier.color} />
                     </div>
-                    <span className="text-sm text-white/80 leading-relaxed font-normal">{feature}</span>
+                    <span className="text-sm text-white/70 leading-snug">{feature}</span>
                   </div>
                 ))}
               </div>
@@ -165,8 +165,8 @@ export default function SubscriptionTab() {
             <h3 className="text-xl font-bold text-white flex items-center gap-2">
               <Heart className="text-car-danger" size={24} /> Support the Project
             </h3>
-            <p className="text-sm text-white/60 max-w-2xl leading-relaxed">
-              DriveLogicAI is built by automotive enthusiasts. If you find our tools useful, consider leaving a tip to help us keep the servers running and add support for more vehicle models.
+            <p className="text-sm text-white/60 max-w-2xl">
+              GPS Route Logic is built by automotive enthusiasts. If you find our tools useful, consider leaving a tip to help us keep the servers running and add support for more vehicle models.
             </p>
           </div>
 
