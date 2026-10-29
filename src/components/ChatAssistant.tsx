@@ -725,24 +725,36 @@ const ChatAssistant = forwardRef<ChatAssistantHandle, ChatAssistantProps>(({
                     <Send size={14} />
                   </button>
                 </div>
-                <div className="mt-2 flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
+                <div className="mt-2 flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-0.5">
+                  <button 
+                    onClick={() => handleSend("Are there any reported speed traps or police radar on I-87 Northway or NYS Thruway right now?")}
+                    className="whitespace-nowrap px-2 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-lg text-[8px] text-amber-300 transition-colors cursor-pointer flex items-center gap-1 font-semibold"
+                  >
+                    🚨 Waze Speed Traps
+                  </button>
+                  <button 
+                    onClick={() => handleSend("Check for active accidents, roadwork delays, or emergency vehicles on New York highways")}
+                    className="whitespace-nowrap px-2 py-0.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg text-[8px] text-rose-300 transition-colors cursor-pointer flex items-center gap-1 font-semibold"
+                  >
+                    💥 Accidents & Roadwork
+                  </button>
+                  <button 
+                    onClick={() => handleSend("What is the current weather radar and road surface condition for driving in Albany and NYC?")}
+                    className="whitespace-nowrap px-2 py-0.5 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-[8px] text-blue-300 transition-colors cursor-pointer flex items-center gap-1 font-semibold"
+                  >
+                    🌧️ Weather & Surface
+                  </button>
+                  <button 
+                    onClick={() => handleSend("General search: What are the current New York Thruway toll rates and E-ZPass discounts?")}
+                    className="whitespace-nowrap px-2 py-0.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[8px] text-white/70 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
+                  >
+                    <Globe size={8} /> General Search
+                  </button>
                   <button 
                     onClick={() => handleSend("What is my current speed and RPM?")}
                     className="whitespace-nowrap px-2 py-0.5 bg-white/5 hover:bg-white/10 rounded-lg text-[8px] text-white/50 hover:text-white transition-colors cursor-pointer"
                   >
                     Speed & RPM
-                  </button>
-                  <button 
-                    onClick={() => handleSend("Search latest recalls for Toyota Camry")}
-                    className="whitespace-nowrap px-2 py-0.5 bg-white/5 hover:bg-white/10 rounded-lg text-[8px] text-white/50 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
-                  >
-                    <Globe size={8} /> Search Recalls
-                  </button>
-                  <button 
-                    onClick={() => handleSend("Recommend best driving route in NY to reduce wear")}
-                    className="whitespace-nowrap px-2 py-0.5 bg-white/5 hover:bg-white/10 rounded-lg text-[8px] text-white/50 hover:text-white transition-colors cursor-pointer"
-                  >
-                    Route Advice
                   </button>
                   <button 
                     onClick={() => handleSend("Diagnose my vehicle health")}

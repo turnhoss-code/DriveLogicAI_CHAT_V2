@@ -25,7 +25,7 @@ import { auth, googleProvider, db } from './firebase';
 
 const GOOGLE_MAPS_LIBRARIES: ('places' | 'geometry')[] = ['places', 'geometry'];
 import { signInWithPopup, onAuthStateChanged, User, signOut, GoogleAuthProvider } from 'firebase/auth';
-import { doc, setDoc, getDocFromServer, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from './lib/firestore';
 import { GoogleDriveFile, createDriveFile, listDriveFiles, deleteDriveFile, downloadDriveFile } from './services/googleDriveService';
 import { Cloud, CloudUpload, HardDrive, RotateCw, Trash2, FolderSync, Mic } from 'lucide-react';
@@ -308,10 +308,10 @@ export default function App() {
         try {
           let userDoc;
           try {
-            userDoc = await getDocFromServer(doc(db, 'users', currentUser.uid));
+            userDoc = await getDoc(doc(db, 'users', currentUser.uid));
           } catch (error) {
             if (error instanceof Error && error.message.includes('the client is offline')) {
-              console.error("Please check your Firebase configuration.");
+              console.warn("Firestore client is in offline cache mode.");
             } else {
               handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
             }
@@ -342,7 +342,7 @@ export default function App() {
           }
         } catch (error) {
           if (error instanceof Error && error.message.includes('the client is offline')) {
-            console.error("Please check your Firebase configuration.");
+            console.warn("Firestore client is in offline cache mode.");
           } else {
             handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
           }

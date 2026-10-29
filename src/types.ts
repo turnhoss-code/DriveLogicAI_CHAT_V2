@@ -95,3 +95,37 @@ export interface SubscriptionPlan {
   recommended?: boolean;
 }
 
+export type RoadHazardType = 'speed_trap' | 'accident' | 'roadwork' | 'emergency_vehicle' | 'weather_hazard' | 'traffic_jam';
+
+export interface RoadHazard {
+  id: string;
+  type: RoadHazardType;
+  title: string;
+  location: string;
+  coordinates: { lat: number; lng: number };
+  severity: 'low' | 'moderate' | 'high' | 'critical';
+  description: string;
+  source: string; // e.g. "Waze Community", "511NY Incident Feed", "NY State Police"
+  timestamp: string; // e.g. "8 min ago" or "Live"
+  reportedDelayMinutes?: number;
+  direction?: 'NB' | 'SB' | 'EB' | 'WB' | 'Both';
+  verifiedCount?: number;
+}
+
+export interface TrafficHazardsResponse {
+  summary: string;
+  location: string;
+  hazards: RoadHazard[];
+  weather?: {
+    tempF: number;
+    condition: string;
+    roadSurface: string;
+    visibility: string;
+    windSpeed: string;
+    hazards?: string[];
+  };
+  sources: { title: string; uri: string }[];
+  lastUpdated: number;
+}
+
+

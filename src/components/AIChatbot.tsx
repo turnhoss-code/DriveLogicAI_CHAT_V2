@@ -9,7 +9,7 @@ import { db } from '../firebase';
 export function AIChatbot({ isOpen, onClose, userId }: { isOpen: boolean, onClose: () => void, userId?: string }) {
   const defaultMessage = {
     role: 'ai' as const,
-    text: 'Hi there! I am your AI Co-pilot. I can help you with vehicle diagnostics, routes, or general queries. You can also enable Antigravity, Google Search, or Maps Grounding below.'
+    text: 'Hello! I am your DriveLogic AI Co-pilot with real-time Google Search grounding. I can diagnose vehicle telemetry, provide optimal routes, search live traffic/weather, look up crowdsourced speed traps & accidents from Waze and 511NY, or answer any general questions outside the app.'
   };
   const [messages, setMessages] = useState<{ role: 'user' | 'ai'; text: string; }[]>([defaultMessage]);
   const [input, setInput] = useState('');
@@ -28,7 +28,9 @@ export function AIChatbot({ isOpen, onClose, userId }: { isOpen: boolean, onClos
     
     // Sync to Firestore whenever messages change, as long as it's not just the default
     if (userId && messages.length > 1) {
-      setDoc(doc(db, 'users', userId), { chatHistory: messages }, { merge: true }).catch(console.error);
+      setDoc(doc(db, 'users', userId), { chatHistory: messages }, { merge: true }).catch((err) => {
+        console.warn('Could not sync chat history to Firestore:', err?.message || err);
+      });
     }
   }, [messages, userId]);
 
@@ -38,7 +40,9 @@ export function AIChatbot({ isOpen, onClose, userId }: { isOpen: boolean, onClos
         if (docSnap.exists() && docSnap.data().chatHistory) {
           setMessages(docSnap.data().chatHistory);
         }
-      }).catch(console.error);
+      }).catch((err) => {
+        console.warn('Could not load chat history from Firestore:', err?.message || err);
+      });
     } else {
       setMessages([defaultMessage]);
     }
@@ -213,7 +217,7 @@ export function AIChatbot({ isOpen, onClose, userId }: { isOpen: boolean, onClos
                 type="text"
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                placeholder="Ask your AI Co-pilot..."
+                placeholder="Ask about traffic, speed traps, weather, mechanics, or general info..."
                 className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:ring-1 focus:ring-car-accent"
               />
               <button

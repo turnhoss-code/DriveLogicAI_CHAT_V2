@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Map as MapIcon, MapPin, Navigation, BrainCircuit, AlertCircle, Info, ArrowRight, Key, Search, AlertTriangle, Mic, FileSpreadsheet, FileCode } from 'lucide-react';
-import { Trip, NavigationState } from '../types';
+import { Map as MapIcon, MapPin, Navigation, BrainCircuit, AlertCircle, Info, ArrowRight, Key, Search, AlertTriangle, Mic, FileSpreadsheet, FileCode, Radio, ShieldAlert } from 'lucide-react';
+import { Trip, NavigationState, RoadHazard, TrafficHazardsResponse } from '../types';
 import { getRouteRecommendation } from '../services/geminiService';
+import { fetchLiveTrafficHazards } from '../services/hazardService';
+import { LiveHazardRadar } from './LiveHazardRadar';
 import { motion } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
-import { GoogleMap, Marker, TrafficLayer, Polyline } from '@react-google-maps/api';
+import { GoogleMap, Marker, TrafficLayer, Polyline, InfoWindow } from '@react-google-maps/api';
 import { calculateRoute, RouteCalculationResult, parseLocationToCoords, DEFAULT_NY_LOCATION } from '../lib/routeService';
 import { cn } from '../lib/utils';
 import TripTimelineDetails from './TripTimelineDetails';
@@ -137,8 +139,41 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
   const [micError, setMicError] = useState<string | null>(null);
   const [calculatedRoute, setCalculatedRoute] = useState<RouteCalculationResult | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const [hazardData, setHazardData] = useState<TrafficHazardsResponse | null>(null);
+  const [isLoadingHazards, setIsLoadingHazards] = useState(false);
+  const [showHazardRadar, setShowHazardRadar] = useState(true);
+  const [activeHazardInfo, setActiveHazardInfo] = useState<RoadHazard | null>(null);
   const recognitionRef = useRef<any>(null);
   const awakeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const loadHazards = useCallback(async (loc?: string) => {
+    setIsLoadingHazards(true);
+    try {
+      const targetLoc = loc || navigation.to || navigation.from || 'Albany, NY';
+      const res = await fetchLiveTrafficHazards({
+        location: targetLoc,
+        lat: location?.lat || DEFAULT_NY_LOCATION.lat,
+        lng: location?.lng || DEFAULT_NY_LOCATION.lng,
+      });
+      setHazardData(res);
+    } catch (e) {
+      console.warn("Failed to load live traffic hazards", e);
+    } finally {
+      setIsLoadingHazards(false);
+    }
+  }, [navigation.to, navigation.from, location]);
+
+  useEffect(() => {
+    loadHazards();
+  }, [loadHazards]);
+
+  const handleSelectHazard = (hazard: RoadHazard) => {
+    setActiveHazardInfo(hazard);
+    if (map && hazard.coordinates) {
+      map.panTo(hazard.coordinates);
+      map.setZoom(14);
+    }
+  };
 
   const processCommand = (command: string) => {
     setSearchValue(command);
@@ -609,26 +644,75 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
                 />
               )}
 
-              {/* Speed Trap Markers */}
-              {MOCK_SPEED_TRAPS.map(trap => (
-                <Marker
-                  key={trap.id}
-                  position={{ lat: trap.lat, lng: trap.lng }}
-                  icon={{
-                    path: (window.google?.maps?.SymbolPath?.CIRCLE ?? 0),
-                    scale: 10,
-                    fillColor: "#EF4444",
-                    fillOpacity: 0.8,
-                    strokeWeight: 2,
-                    strokeColor: "#FFFFFF",
-                  }}
-                  label={{
-                    text: "👮",
-                    fontSize: "12px",
-                  }}
-                  title={`Speed Trap reported ${Math.round((Date.now() - trap.reportedAt) / 60000)} mins ago`}
-                />
-              ))}
+              {/* Live Crowdsourced Road Hazards, Speed Traps & Accidents */}
+              {showHazardRadar && hazardData?.hazards?.map((hazard) => {
+                const getMarkerConfig = (type: string) => {
+                  switch (type) {
+                    case 'speed_trap':
+                      return { color: '#F59E0B', label: '👮', title: 'Speed Trap' };
+                    case 'accident':
+                      return { color: '#EF4444', label: '💥', title: 'Accident' };
+                    case 'roadwork':
+                      return { color: '#F97316', label: '🚧', title: 'Roadwork' };
+                    case 'emergency_vehicle':
+                      return { color: '#06B6D4', label: '🚑', title: 'Emergency Vehicle' };
+                    case 'weather_hazard':
+                      return { color: '#3B82F6', label: '🌧️', title: 'Weather Hazard' };
+                    default:
+                      return { color: '#A855F7', label: '⚠️', title: 'Hazard' };
+                  }
+                };
+                const config = getMarkerConfig(hazard.type);
+                return (
+                  <Marker
+                    key={hazard.id}
+                    position={hazard.coordinates}
+                    onClick={() => setActiveHazardInfo(hazard)}
+                    icon={{
+                      path: (window.google?.maps?.SymbolPath?.CIRCLE ?? 0),
+                      scale: 12,
+                      fillColor: config.color,
+                      fillOpacity: 0.9,
+                      strokeWeight: 2,
+                      strokeColor: "#FFFFFF",
+                    }}
+                    label={{
+                      text: config.label,
+                      fontSize: "12px",
+                    }}
+                    title={`${hazard.title}: ${hazard.location}`}
+                  />
+                );
+              })}
+
+              {/* InfoWindow for selected hazard */}
+              {activeHazardInfo && (
+                <InfoWindow
+                  position={activeHazardInfo.coordinates}
+                  onCloseClick={() => setActiveHazardInfo(null)}
+                >
+                  <div className="p-1 max-w-[220px] text-zinc-900">
+                    <div className="font-bold text-xs flex items-center gap-1 text-zinc-950">
+                      <span>{activeHazardInfo.title}</span>
+                    </div>
+                    <div className="text-[10px] font-semibold text-amber-700 mt-0.5">
+                      {activeHazardInfo.location}
+                    </div>
+                    <div className="text-[10px] text-zinc-600 mt-1 leading-snug">
+                      {activeHazardInfo.description}
+                    </div>
+                    {activeHazardInfo.reportedDelayMinutes !== undefined && activeHazardInfo.reportedDelayMinutes > 0 && (
+                      <div className="text-[10px] font-bold text-rose-600 mt-1">
+                        Delay: +{activeHazardInfo.reportedDelayMinutes} mins
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between text-[9px] text-zinc-500 mt-1.5 pt-1 border-t border-zinc-200">
+                      <span>{activeHazardInfo.source}</span>
+                      <span>{activeHazardInfo.timestamp}</span>
+                    </div>
+                  </div>
+                </InfoWindow>
+              )}
 
               {/* Waypoint Markers */}
               {navigation.waypoints?.map((wp, i) => (
@@ -693,6 +777,23 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
                 title="Toggle Traffic Layer"
               >
                 <MapIcon size={18} />
+              </button>
+              <button
+                onClick={() => setShowHazardRadar(!showHazardRadar)}
+                className={cn(
+                  "p-3 rounded-xl transition-all border shadow-lg relative cursor-pointer",
+                  showHazardRadar 
+                    ? "bg-amber-500 text-black border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]" 
+                    : "bg-black/60 text-white/60 border-white/10 hover:bg-black/80"
+                )}
+                title="Toggle Live Road Hazard & Speed Trap Radar"
+              >
+                <ShieldAlert size={18} />
+                {hazardData && hazardData.hazards.length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center font-mono">
+                    {hazardData.hazards.length}
+                  </span>
+                )}
               </button>
             </div>
 
@@ -805,6 +906,17 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
           </div>
         )}
       </div>
+
+      {/* Live Road & Hazard Radar Panel */}
+      {showHazardRadar && (
+        <LiveHazardRadar
+          data={hazardData}
+          isLoading={isLoadingHazards}
+          onRefresh={(loc) => loadHazards(loc)}
+          onSelectHazard={handleSelectHazard}
+          selectedHazardId={activeHazardInfo?.id}
+        />
+      )}
 
       {/* AI Route Recommendation */}
       <div className="glass-card p-6 rounded-3xl space-y-4">
