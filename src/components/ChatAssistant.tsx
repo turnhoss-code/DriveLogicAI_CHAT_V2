@@ -5,7 +5,7 @@ import { processVoiceCommand } from '../services/geminiService';
 import { cn } from '../lib/utils';
 import { PostCommandActions } from '../types';
 
-export type ChatModel = 'gemini-3.5-flash' | 'gemini-3.1-pro-preview' | 'gemini-3.1-flash-lite';
+export type ChatModel = 'gemini-3.8-flash' | 'gemini-3.1-pro-preview' | 'gemini-3.1-flash-lite';
 export type ChatRole = 'general' | 'diagnostics' | 'telemetry';
 
 export interface MessageSource {
@@ -98,7 +98,7 @@ const ChatAssistant = forwardRef<ChatAssistantHandle, ChatAssistantProps>(({
   const [isOpen, setIsOpen] = useState(false);
   const [isMini, setIsMini] = useState(false);
   const [size, setSize] = useState({ width: 340, height: 480 });
-  const [selectedModel, setSelectedModel] = useState<ChatModel>('gemini-3.5-flash');
+  const [selectedModel, setSelectedModel] = useState<ChatModel>('gemini-3.8-flash');
   const [selectedRole, setSelectedRole] = useState<ChatRole>('general');
   const [messages, setMessages] = useState<Message[]>([
     { 
@@ -106,7 +106,7 @@ const ChatAssistant = forwardRef<ChatAssistantHandle, ChatAssistantProps>(({
       text: "Hi, I'm DriveLogic AI, your multi-turn onboard automotive assistant. I can diagnose fault codes, recommend optimized routes in NY state, and query real-time Google Search data. How can I assist you?", 
       sender: 'ai', 
       timestamp: Date.now(),
-      model: 'gemini-3.5-flash',
+      model: 'gemini-3.8-flash',
       role: 'general'
     }
   ]);
@@ -540,19 +540,19 @@ const ChatAssistant = forwardRef<ChatAssistantHandle, ChatAssistantProps>(({
                   <button
                     type="button"
                     onClick={() => {
-                      setSelectedModel('gemini-3.5-flash');
+                      setSelectedModel('gemini-3.8-flash');
                       setSelectedRole('general');
                     }}
                     className={cn(
                       "px-2 py-0.5 rounded-full flex items-center gap-1 transition-all cursor-pointer",
-                      selectedModel === 'gemini-3.5-flash'
+                      selectedModel === 'gemini-3.8-flash'
                         ? "bg-car-accent/20 border border-car-accent/60 text-car-accent font-bold"
                         : "bg-white/5 text-white/50 hover:text-white"
                     )}
-                    title="gemini-3.5-flash: General tasks + Google Search Grounding"
+                    title="gemini-3.8-flash: General tasks + Google Search Grounding"
                   >
                     <Globe size={9} />
-                    <span>3.5 Flash</span>
+                    <span>3.8 Flash</span>
                   </button>
 
                   <button

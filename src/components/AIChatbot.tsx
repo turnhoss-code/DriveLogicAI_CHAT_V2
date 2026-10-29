@@ -17,7 +17,7 @@ export function AIChatbot({ isOpen, onClose, userId }: { isOpen: boolean, onClos
   const [useAntigravity, setUseAntigravity] = useState(false);
   const [useSearch, setUseSearch] = useState(true);
   const [useMaps, setUseMaps] = useState(false);
-  const [modelType, setModelType] = useState<'gemini-3.1-pro-preview' | 'gemini-3.5-flash' | 'gemini-3.1-flash-lite'>('gemini-3.5-flash');
+  const [modelType, setModelType] = useState<'gemini-3.1-pro-preview' | 'gemini-3.8-flash' | 'gemini-3.1-flash-lite'>('gemini-3.8-flash');
   const [role, setRole] = useState<'General Assistant' | 'Mechanic' | 'Navigator'>('General Assistant');
   const [interactionId, setInteractionId] = useState<string | undefined>(undefined);
   
@@ -166,7 +166,7 @@ export function AIChatbot({ isOpen, onClose, userId }: { isOpen: boolean, onClos
                   className="bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-white/80 focus:outline-none focus:border-car-accent transition-colors"
                 >
                   <option value="gemini-3.1-flash-lite">Fast (3.1 Lite)</option>
-                  <option value="gemini-3.5-flash">General (3.5 Flash)</option>
+                  <option value="gemini-3.8-flash">General (3.8 Flash)</option>
                   <option value="gemini-3.1-pro-preview">Complex (3.1 Pro)</option>
                 </select>
                 <select 
