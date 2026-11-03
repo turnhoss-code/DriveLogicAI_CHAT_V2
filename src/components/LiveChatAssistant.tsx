@@ -104,7 +104,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
   obdData,
   navigation
 }: LiveChatAssistantProps, ref) => {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
   const [isMini, setIsMini] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [isMicActive, setIsMicActive] = useState(false);
@@ -324,9 +324,6 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
       onTabChangeRef.current && onTabChangeRef.current('gps');
       runProactiveHazardBriefingRef.current(args.location);
       actionDesc = actionDesc || `Scanning 911 CAD, Crime Radar, Waze, Weather, Prior Trips & Prior Chats...`;
-    } else if (name === 'control3DStudio') {
-      onTabChangeRef.current && onTabChangeRef.current('scene3d');
-      actionDesc = actionDesc || `Updated 3D Digital Twin Studio (${args.cameraPreset || args.inspectSubsystem || 'Active'})`;
     } else if (name === 'manageMaintenance') {
       onTabChangeRef.current && onTabChangeRef.current('maintenance');
       actionDesc = actionDesc || `Updated Vehicle Maintenance (${args.action || 'view'})`;
@@ -369,6 +366,8 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
     open: () => {
       setIsOpen(true);
       setIsMini(false);
+      ensureOutputAudio();
+      speakGreeting(true, true);
     },
     close: () => {
       setIsOpen(false);
@@ -655,11 +654,14 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
             receivedAudioThisTurnRef.current = true;
             setActiveSpeechState('speaking');
             ensureOutputAudio();
-            if (outputAudioCtxRef.current && outputAnalyserRef.current) {
+            if (outputAudioCtxRef.current) {
+              if (outputAudioCtxRef.current.state === 'suspended') {
+                outputAudioCtxRef.current.resume().catch(() => {});
+              }
               playAudioChunk(
                 outputAudioCtxRef.current,
                 msg.audio,
-                outputAnalyserRef.current,
+                outputAnalyserRef.current || outputAudioCtxRef.current.destination,
                 () => setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle')
               );
             }
@@ -718,14 +720,12 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
             if (!hadAudio && spokenSoFar && voiceVolume !== 'mute') {
               setActiveSpeechState('speaking');
               ensureOutputAudio();
-              if (outputAudioCtxRef.current && outputAnalyserRef.current) {
-                speakWithEclipseTTS(
-                  spokenSoFar,
-                  outputAudioCtxRef.current,
-                  outputAnalyserRef.current,
-                  () => setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle')
-                );
-              }
+              speakWithEclipseTTS(
+                spokenSoFar,
+                outputAudioCtxRef.current,
+                outputAnalyserRef.current || undefined,
+                () => setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle')
+              );
             } else if (!hadAudio) {
               setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle');
             }
@@ -870,9 +870,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
 
             if (finalTranscript.trim()) {
               const textToSend = finalTranscript.trim();
-              // When Gemini Live is connected, raw 16kHz PCM audio is already streamed into Gemini Live.
-              // We only send text to the server if the Live WebSocket session is not active (fallback mode).
-              if (!isLiveRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                 setActiveSpeechState('thinking');
                 wsRef.current.send(JSON.stringify({ text: textToSend, useSearch: true }));
               }
@@ -1065,7 +1063,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
   };
 
   // Speak DriveLogic greeting helper using Eclipse Neural Female Voice (Kore)
-  const speakGreeting = useCallback((appendTranscript = false) => {
+  const speakGreeting = useCallback((appendTranscript = false, autoStartMicAfter = false) => {
     if (appendTranscript) {
       setLiveTranscript(prev => {
         const last = prev[prev.length - 1];
@@ -1073,36 +1071,57 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
         return [...prev, { id: Math.random().toString(), sender: 'ai', text: DRIVE_LOGIC_GREETING, timestamp: Date.now() }];
       });
     }
+    const onGreetingComplete = () => {
+      setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle');
+      if (autoStartMicAfter && !isMicActiveRef.current) {
+        startMic().catch(() => {});
+      }
+    };
     if (voiceVolume !== 'mute' && typeof window !== 'undefined') {
       try {
         setActiveSpeechState('speaking');
         ensureOutputAudio();
-        if (outputAudioCtxRef.current && outputAnalyserRef.current) {
-          speakWithEclipseTTS(
-            DRIVE_LOGIC_GREETING,
-            outputAudioCtxRef.current,
-            outputAnalyserRef.current,
-            () => setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle')
-          );
-        }
+        speakWithEclipseTTS(
+          DRIVE_LOGIC_GREETING,
+          outputAudioCtxRef.current,
+          outputAnalyserRef.current || undefined,
+          onGreetingComplete
+        );
       } catch {
-        setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle');
+        onGreetingComplete();
       }
+    } else {
+      onGreetingComplete();
     }
   }, [voiceVolume]);
 
-  // Automatically speak "Hi, I'm DriveLogic. How can I assist you?" as soon as the app loads
+  // Automatically enable chat, speak "Hi, I'm DriveLogic. How can I assist you?", and activate hands-free mic on load
   useEffect(() => {
     if (hasSpokenInitialGreetingRef.current) return;
     hasSpokenInitialGreetingRef.current = true;
 
-    const timer = setTimeout(() => {
-      speakGreeting(false);
-    }, 600);
+    let unlockedByGesture = false;
 
-    // Also attach a one-time gesture listener in case browser autoplay policy deferred AudioContext
+    const timer = setTimeout(() => {
+      const ctxSuspended = outputAudioCtxRef.current?.state === 'suspended';
+      speakGreeting(false, true);
+      if (ctxSuspended) {
+        // Keep gesture listener ready if browser blocked autoplay before user click
+        unlockedByGesture = false;
+      }
+    }, 350);
+
+    // Gesture listener ensures immediate audible greeting & mic activation if browser deferred autoplay
     const unlockAndSpeak = () => {
+      if (unlockedByGesture) return;
+      unlockedByGesture = true;
+      const wasSuspended = !outputAudioCtxRef.current || outputAudioCtxRef.current.state === 'suspended';
       ensureOutputAudio();
+      if (wasSuspended) {
+        speakGreeting(false, true);
+      } else if (!isMicActiveRef.current) {
+        startMic().catch(() => {});
+      }
       window.removeEventListener('pointerdown', unlockAndSpeak);
       window.removeEventListener('keydown', unlockAndSpeak);
     };
@@ -1526,6 +1545,8 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
             onClick={() => {
               setIsOpen(true);
               setIsMini(false);
+              ensureOutputAudio();
+              speakGreeting(true, true);
             }}
             className="px-3.5 py-2 rounded-full bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 text-white shadow-[0_4px_20px_rgba(16,185,129,0.35)] flex items-center gap-2 hover:scale-105 active:scale-95 transition-all duration-200 group border border-emerald-400/40 cursor-pointer"
             title='Open DriveLogic Live Voice Chat (Eclipse Female Voice • Google Search & 911 Radar Grounded)'
@@ -1575,26 +1596,64 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
             className="fixed bottom-20 left-3 right-3 max-w-md mx-auto z-[65] glass-card rounded-3xl overflow-hidden border border-emerald-500/30 shadow-[0_12px_40px_rgba(0,0,0,0.65)] flex flex-col bg-zinc-950/95 backdrop-blur-xl"
           >
             {/* Header */}
-            <div className="p-3 bg-gradient-to-r from-emerald-950/60 via-zinc-900/80 to-zinc-900/90 flex items-center justify-between border-b border-emerald-500/20 shrink-0">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 bg-emerald-500/20 rounded-xl border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                  <Radio size={14} className={cn(isLive && "animate-pulse")} />
-                </div>
-                <div className="flex flex-col">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-white">DriveLogic</span>
-                    <span className="px-1.5 py-0.2 rounded-full text-[8px] font-bold font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                      Eclipse Voice
+            <div className="p-3 bg-gradient-to-r from-emerald-950/70 via-zinc-900/90 to-zinc-900/95 border-b border-emerald-500/20 shrink-0 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="p-1.5 bg-emerald-500/20 rounded-xl border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                    <Radio size={14} className={cn(isLive && "animate-pulse")} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-bold uppercase tracking-wider text-white whitespace-nowrap">DriveLogic</span>
+                      <span className="px-1.5 py-0.2 rounded-full text-[8px] font-bold font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
+                        Eclipse Voice
+                      </span>
+                    </div>
+                    <span className="text-[8.5px] font-mono text-emerald-400/80 leading-none truncate block mt-0.5">
+                      {isLive ? '911 • Crime Radar • Search Grounded • Hands-Free' : 'Connecting to Eclipse Real-Time Voice...'}
                     </span>
                   </div>
-                  <span className="text-[8.5px] font-mono text-emerald-400/80 leading-none mt-0.5">
-                    {isLive ? '911 • Crime Radar • Search Grounded • Hands-Free' : 'Connecting to Eclipse Real-Time Voice...'}
-                  </span>
+                </div>
+
+                {/* Window Action Controls */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={cycleVolume}
+                    className="p-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white/80 hover:text-white transition-all cursor-pointer"
+                    title={`Voice Volume: ${voiceVolume.toUpperCase()} (Tap to change)`}
+                  >
+                    {voiceVolume === 'mute' ? (
+                      <VolumeX size={13} className="text-red-400" />
+                    ) : voiceVolume === 'low' ? (
+                      <Volume1 size={13} className="text-emerald-300" />
+                    ) : (
+                      <Volume2 size={13} className="text-emerald-400" />
+                    )}
+                  </button>
+
+                  <button 
+                    type="button"
+                    onClick={() => setIsMini(!isMini)}
+                    className="p-1.5 hover:bg-white/10 rounded-lg text-white/60 hover:text-white transition-colors cursor-pointer"
+                    title={isMini ? "Expand Chat" : "Minimize"}
+                  >
+                    {isMini ? <Maximize2 size={13} /> : <Minimize2 size={13} />}
+                  </button>
+
+                  <button 
+                    type="button"
+                    onClick={() => setIsOpen(false)} 
+                    className="p-1.5 hover:bg-white/10 rounded-lg text-white/60 hover:text-white transition-colors cursor-pointer"
+                    title="Close DriveLogic Assistant"
+                  >
+                    <X size={15} />
+                  </button>
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5">
-                {/* Proactive 911 & Hazard Verbal Alerts Toggle */}
+              {/* Sub-row for 911, Search Grounding, and Voice toggles */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -1603,7 +1662,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
                     localStorage.setItem('ztcd_proactive_911_alerts', String(next));
                   }}
                   className={cn(
-                    "px-2 py-0.5 rounded-full border flex items-center gap-1 text-[9px] font-mono tracking-wide transition-all cursor-pointer",
+                    "px-2 py-0.5 rounded-full border flex items-center gap-1 text-[8.5px] font-mono tracking-wide transition-all cursor-pointer shrink-0",
                     proactiveAlertsEnabled
                       ? "bg-rose-500/20 text-rose-300 border-rose-400/50 hover:bg-rose-500/30"
                       : "bg-white/5 text-white/40 border-white/10 hover:text-white/70"
@@ -1614,7 +1673,6 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
                   <span>911 Live</span>
                 </button>
 
-                {/* Search Grounding Data Toggle */}
                 <button
                   type="button"
                   onClick={() => {
@@ -1623,7 +1681,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
                     localStorage.setItem('ztcd_live_use_search', String(next));
                   }}
                   className={cn(
-                    "px-2 py-0.5 rounded-full border flex items-center gap-1 text-[9px] font-mono tracking-wide transition-all cursor-pointer",
+                    "px-2 py-0.5 rounded-full border flex items-center gap-1 text-[8.5px] font-mono tracking-wide transition-all cursor-pointer shrink-0",
                     useSearch 
                       ? "bg-blue-500/20 text-blue-300 border-blue-400/50 hover:bg-blue-500/30" 
                       : "bg-white/5 text-white/40 border-white/10 hover:text-white/70"
@@ -1631,52 +1689,17 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
                   title={useSearch ? "Google Search Data Grounding Enabled" : "Google Search Grounding Disabled"}
                 >
                   <Search size={10} className={useSearch ? "text-blue-400" : "text-white/40"} />
-                  <span>Search</span>
+                  <span>Search Grounded</span>
                 </button>
 
-                {/* Natural Voice Selector Button */}
                 <button
                   type="button"
                   onClick={cycleVoice}
-                  className="px-2 py-0.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 flex items-center gap-1 text-[9px] font-mono tracking-wide transition-all cursor-pointer"
+                  className="px-2 py-0.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 flex items-center gap-1 text-[8.5px] font-mono tracking-wide transition-all cursor-pointer shrink-0"
                   title={`Gemini Live Natural Voice: ${liveVoice === 'Kore' ? 'Eclipse (Kore)' : liveVoice} (Tap to change)`}
                 >
                   <Sparkles size={10} className="text-emerald-400" />
-                  <span>{liveVoice === 'Kore' ? 'Eclipse' : liveVoice}</span>
-                </button>
-
-                {/* Voice Volume Button */}
-                <button
-                  onClick={cycleVolume}
-                  className="px-2 py-0.5 rounded-full bg-white/10 hover:bg-white/15 border border-white/10 text-white/80 hover:text-white flex items-center gap-1 text-[9px] font-mono tracking-wide transition-all cursor-pointer"
-                  title={`Voice Volume: ${voiceVolume.toUpperCase()} (Tap to change)`}
-                >
-                  {voiceVolume === 'mute' ? (
-                    <VolumeX size={11} className="text-red-400" />
-                  ) : voiceVolume === 'low' ? (
-                    <Volume1 size={11} className="text-emerald-300" />
-                  ) : (
-                    <Volume2 size={11} className="text-emerald-400" />
-                  )}
-                  <span className="uppercase font-semibold">{voiceVolume}</span>
-                </button>
-
-                {/* Mini Toggle */}
-                <button 
-                  onClick={() => setIsMini(!isMini)}
-                  className="p-1 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors cursor-pointer"
-                  title={isMini ? "Expand Chat" : "Minimize"}
-                >
-                  {isMini ? <Maximize2 size={13} /> : <Minimize2 size={13} />}
-                </button>
-
-                {/* Close Button */}
-                <button 
-                  onClick={() => setIsOpen(false)} 
-                  className="p-1 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors cursor-pointer"
-                  title="Close DriveLogic Assistant"
-                >
-                  <X size={15} />
+                  <span>{liveVoice === 'Kore' ? 'Eclipse Voice' : liveVoice}</span>
                 </button>
               </div>
             </div>

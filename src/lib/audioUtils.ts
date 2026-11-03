@@ -94,9 +94,21 @@ export function resetAudioPlayback() {
   }
 }
 
+let cachedVoices: SpeechSynthesisVoice[] = [];
+if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  try {
+    cachedVoices = window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => {
+      cachedVoices = window.speechSynthesis.getVoices();
+    };
+  } catch {
+    // ignore
+  }
+}
+
 export function selectNaturalFemaleBrowserVoice(): SpeechSynthesisVoice | null {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
-  const voices = window.speechSynthesis.getVoices();
+  const voices = cachedVoices.length > 0 ? cachedVoices : window.speechSynthesis.getVoices();
   if (!voices || voices.length === 0) return null;
 
   const preferredFemaleNames = [
@@ -113,6 +125,7 @@ export function selectNaturalFemaleBrowserVoice(): SpeechSynthesisVoice | null {
     'Moira',
     'Tessa',
     'Zira',
+    'Female',
   ];
 
   for (const name of preferredFemaleNames) {
@@ -136,8 +149,15 @@ export function speakFallbackFemaleVoice(text: string, onEnd?: () => void) {
     return;
   }
   try {
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
     window.speechSynthesis.cancel();
-    const cleanText = text.replace(/[*#_`~]/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim();
+    const cleanText = text
+      .replace(/---[\s\S]*$/g, '')
+      .replace(/[*#_`~]/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .trim();
     if (!cleanText) {
       onEnd?.();
       return;
@@ -147,11 +167,19 @@ export function speakFallbackFemaleVoice(text: string, onEnd?: () => void) {
     if (femaleVoice) {
       utterance.voice = femaleVoice;
     }
-    utterance.rate = 1.02;
-    utterance.pitch = 1.08;
+    utterance.rate = 1.0;
+    utterance.pitch = 1.06;
+    utterance.volume = 1.0;
     utterance.onend = () => onEnd?.();
     utterance.onerror = () => onEnd?.();
     window.speechSynthesis.speak(utterance);
+
+    // Safeguard for browsers that randomly pause synthesis
+    setTimeout(() => {
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+    }, 120);
   } catch {
     onEnd?.();
   }
@@ -159,8 +187,8 @@ export function speakFallbackFemaleVoice(text: string, onEnd?: () => void) {
 
 export async function speakWithEclipseTTS(
   text: string,
-  audioCtx: AudioContext,
-  destination: AudioNode = audioCtx.destination,
+  audioCtx?: AudioContext | null,
+  destination?: AudioNode,
   onEnd?: () => void
 ): Promise<boolean> {
   const cleanText = text
@@ -197,13 +225,13 @@ export async function speakWithEclipseTTS(
 
     if (res.ok) {
       const data = await res.json();
-      if (data?.audio) {
-        playAudioChunk(audioCtx, data.audio, destination, onEnd);
+      if (data?.audio && audioCtx) {
+        playAudioChunk(audioCtx, data.audio, destination || audioCtx.destination, onEnd);
         return true;
       }
     }
   } catch {
-    // Fall back to natural female browser voice if offline
+    // Fall back to natural female browser voice if offline or quota exceeded
   }
 
   speakFallbackFemaleVoice(cleanText, onEnd);

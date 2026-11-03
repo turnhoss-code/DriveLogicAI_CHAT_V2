@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Activity, Gauge, Map as MapIcon, History, Play, Square, BrainCircuit, AlertTriangle, ChevronRight, Settings, X, Key, Wrench, AlertCircle, CreditCard, Box, Sparkles } from 'lucide-react';
+import { Activity, Gauge, Map as MapIcon, History, Play, Square, BrainCircuit, AlertTriangle, ChevronRight, Settings, X, Key, Wrench, AlertCircle, CreditCard, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { OBDData, Trip, DamagePoint, TripEvent, SensorPoint, NavigationState, PostCommandActions } from './types';
 import { cn } from './lib/utils';
@@ -14,7 +14,6 @@ import GPSTab from './components/GPSTab';
 import FloatingMap from './components/FloatingMap';
 import LiveChatAssistant, { LiveChatAssistantHandle } from './components/LiveChatAssistant';
 import { AIChatbot } from './components/AIChatbot';
-import { VehicleScene3D } from './components/VehicleScene3D';
 import MaintenanceTab from './components/MaintenanceTab';
 import SubscriptionTab from './components/SubscriptionTab';
 import { runAIDiagnosis } from './services/geminiService';
@@ -61,7 +60,7 @@ export default function App() {
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const chatAssistantRef = useRef<LiveChatAssistantHandle>(null);
   const [isChatbotOpen, setIsChatbotOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'obd' | 'scene3d' | 'damage' | 'gps' | 'maintenance' | 'subscription'>('obd');
+  const [activeTab, setActiveTab] = useState<'obd' | 'damage' | 'gps' | 'maintenance' | 'subscription'>('obd');
   const [obdData, setObdData] = useState<OBDData>({
     rpm: 0,
     speed: 0,
@@ -663,7 +662,6 @@ export default function App() {
 
   const tabs = [
     { id: 'obd', label: 'OBD', icon: Gauge },
-    { id: 'scene3d', label: '3D Studio', icon: Box },
     { id: 'damage', label: 'Damage', icon: Activity },
     { id: 'gps', label: 'GPS', icon: MapIcon },
     { id: 'maintenance', label: 'Service', icon: Wrench },
@@ -1448,13 +1446,13 @@ export default function App() {
             chatAssistantRef.current?.toggleMic();
           }
         }}
-        className="px-4 py-3.5 pt-5 flex justify-between items-center border-b border-white/10 bg-car-card/85 backdrop-blur-xl sticky top-0 z-50 cursor-grab active:cursor-grabbing gap-2 shadow-md"
+        className="px-3 sm:px-4 py-3 pt-4 sm:pt-5 flex items-center justify-between border-b border-white/10 bg-car-card/90 backdrop-blur-xl sticky top-0 z-50 cursor-grab active:cursor-grabbing gap-2 shadow-md"
       >
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <div className="relative group shrink-0">
             <button 
               onClick={() => setShowSettings(true)}
-              className="p-2 rounded-xl bg-white/5 text-white/60 hover:text-white hover:bg-white/10 transition-all cursor-pointer border border-white/10"
+              className="p-2 rounded-xl bg-white/5 text-white/60 hover:text-white hover:bg-white/10 transition-all cursor-pointer border border-white/10 shrink-0"
               title="Open DriveLogic Settings"
             >
               <Settings size={18} className="shrink-0" />
@@ -1464,11 +1462,11 @@ export default function App() {
             </div>
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-white truncate">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <h1 className="text-base sm:text-lg font-extrabold tracking-tight text-white whitespace-nowrap">
                 DriveLogic
               </h1>
-              <span className="px-1.5 py-0.5 rounded-full text-[8px] font-mono font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
+              <span className="px-1.5 py-0.2 rounded-full text-[8px] font-mono font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
                 Eclipse
               </span>
             </div>
@@ -1479,12 +1477,12 @@ export default function App() {
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button 
-            onClick={() => setIsChatbotOpen(true)}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 text-[10px] font-semibold hover:bg-emerald-500/25 transition-all shadow-sm cursor-pointer"
-            title="Open DriveLogic Chat (Eclipse Female Voice • Google Search Grounded)"
+            onClick={() => chatAssistantRef.current?.open()}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 text-[10px] font-semibold hover:bg-emerald-500/25 transition-all shadow-sm cursor-pointer shrink-0"
+            title="Open DriveLogic Live Voice Chat (Eclipse Female Voice • Google Search Grounded)"
           >
             <Sparkles size={11} className="shrink-0 text-emerald-400 animate-pulse" />
-            <span>DriveLogic</span>
+            <span>Chat</span>
           </button>
 
           <button 
@@ -1560,15 +1558,6 @@ export default function App() {
                 googleAccessToken={googleAccessToken}
                 onLinkDrive={linkGoogleDrive}
                 totalMileage={totalMileage}
-                vehicleModel={vehicleModel}
-                onOpen3DStudio={() => setActiveTab('scene3d')}
-              />
-            )}
-            {activeTab === 'scene3d' && (
-              <VehicleScene3D
-                obdData={obdData}
-                speed={obdData.speed}
-                rpm={obdData.rpm}
                 vehicleModel={vehicleModel}
               />
             )}
@@ -1951,14 +1940,13 @@ export default function App() {
                   <div className="space-y-2 max-h-44 overflow-y-auto pr-2 settings-scrollbar">
                     <p className="text-[10px] text-white/50 mb-2">Say <strong className="text-emerald-300">"Hey, DriveLogic"</strong> to control any button or ask anything:</p>
                     <ul className="text-[10px] text-white/80 space-y-1.5 font-mono list-disc pl-4">
-                      <li>"Switch to OBD / 3D Studio / Damage / GPS / Maintenance / Pro tab"</li>
+                      <li>"Switch to OBD / Damage / GPS / Maintenance / Pro tab"</li>
                       <li>"Connect ELM327 Bluetooth" or "Connect USB OBD"</li>
                       <li>"Diagnose my vehicle" or "Look up code P0420"</li>
                       <li>"Start trip recording" / "Stop recording"</li>
                       <li>"Log a severe pothole" / "Enable simulation mode"</li>
                       <li>"Navigate to [Destination]" / "Optimize low-damage route"</li>
                       <li>"Scan 911 and Crime Radar ahead" / "What's ahead on my route?"</li>
-                      <li>"Open 3D X-Ray mode" / "Show engine bay in 3D"</li>
                       <li>"Mark oil change complete" / "Backup data to Google Drive"</li>
                     </ul>
                   </div>

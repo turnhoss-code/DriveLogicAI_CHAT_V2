@@ -236,13 +236,13 @@ function getGenAI(customApiKey?: string): GoogleGenAI | null {
 const DRIVE_LOGIC_FUNCTION_DECLARATIONS = [
   {
     name: 'changeTab',
-    description: 'Switch the active dashboard tab (OBD diagnostics, 3D Digital Twin Studio, Damage & Accelerometer Log, GPS Navigation & Hazard Radar, Service/Maintenance, or Pro Subscription).',
+    description: 'Switch the active dashboard tab (OBD diagnostics, Damage & Accelerometer Log, GPS Navigation & Hazard Radar, Service/Maintenance, or Pro Subscription).',
     parameters: {
       type: Type.OBJECT,
       properties: {
         tab: {
           type: Type.STRING,
-          enum: ['obd', 'scene3d', 'damage', 'gps', 'maintenance', 'subscription'],
+          enum: ['obd', 'damage', 'gps', 'maintenance', 'subscription'],
           description: 'Tab ID to switch to'
         }
       },
@@ -411,33 +411,7 @@ const DRIVE_LOGIC_FUNCTION_DECLARATIONS = [
       }
     }
   },
-  {
-    name: 'control3DStudio',
-    description: 'Control the 3D Digital Twin Studio: change camera angle, toggle exploded chassis view, toggle diagnostic telemetry mode, or change vehicle paint finish.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        cameraView: {
-          type: Type.STRING,
-          enum: ['orbit', 'threeQuarter', 'side', 'engine', 'top'],
-          description: '3D camera view preset'
-        },
-        exploded: {
-          type: Type.BOOLEAN,
-          description: 'True to explode the 3D vehicle parts view, false to collapse'
-        },
-        diagnosticMode: {
-          type: Type.BOOLEAN,
-          description: 'True to enable diagnostic thermal/stress highlights, false to disable'
-        },
-        paint: {
-          type: Type.STRING,
-          enum: ['titanium', 'crimson', 'obsidian', 'cyan', 'pearl'],
-          description: 'Vehicle PBR paint finish preset'
-        }
-      }
-    }
-  },
+
   {
     name: 'manageMaintenance',
     description: 'Complete an existing vehicle maintenance/service task or add a new maintenance task.',
@@ -646,14 +620,7 @@ function handleAutomotiveCommandFallback(text: string, contextData: any) {
   if (lower.includes('backup') || lower.includes('google drive') || lower.includes('cloud sync')) {
     return { text: "Initiating Google Drive cloud backup.", functionCalls: [{ name: 'controlSettings', args: { action: 'open', cloudBackup: true } }] };
   }
-  if (lower.includes('3d') || lower.includes('digital twin') || lower.includes('exploded') || lower.includes('engine bay')) {
-    const exploded = lower.includes('explode');
-    const cameraView = lower.includes('engine') ? 'engine' : lower.includes('top') ? 'top' : lower.includes('side') ? 'side' : 'threeQuarter';
-    return {
-      text: `Opening 3D Digital Twin Studio${exploded ? ' with exploded chassis view' : ''}.`,
-      functionCalls: [{ name: 'control3DStudio', args: { cameraView, exploded } }]
-    };
-  }
+
   if (lower.includes('simulation on') || lower.includes('start simulation') || lower.includes('enable simulation')) {
     return { text: "Vehicle telemetry simulation activated.", functionCalls: [{ name: 'toggleSimulation', args: { enabled: true } }] };
   }
@@ -1676,7 +1643,7 @@ Your default wake word is "Hey, DriveLogic" and your signature greeting is "Hi, 
 MANDATORY OPERATING RULES:
 1. ALWAYS search the web using Google Search and gather as much prudent, verified info as possible when diagnosing vehicles (OBD-II fault codes, TSBs, recalls, symptoms, repair fixes) or answering general knowledge, news, weather, traffic, or driving questions.
 2. KEEP your responses short, natural, warm, and concise (1 to 3 conversational sentences suitable for safe hands-free driving).
-3. You are a general assistant on top of controlling every feature and button in the app. Whenever the driver asks to switch tabs, open/close settings, connect ELM327 BLE/USB, run diagnostics, download reports, start/stop trip recording, toggle simulation, log a pothole/damage point, set navigation, expand/minimize the map, filter road hazards, control the 3D Digital Twin Studio, complete/add maintenance tasks, or back up to Google Drive, ALWAYS invoke the matching function declaration tool!
+3. You are a general assistant on top of controlling every feature and button in the app. Whenever the driver asks to switch tabs, open/close settings, connect ELM327 BLE/USB, run diagnostics, download reports, start/stop trip recording, toggle simulation, log a pothole/damage point, set navigation, expand/minimize the map, filter road hazards, complete/add maintenance tasks, or back up to Google Drive, ALWAYS invoke the matching function declaration tool!
 
 PERSISTENT MEMORY OF PRIOR CHATS & CONVERSATIONS:
 ${priorChatsText}
@@ -1956,7 +1923,8 @@ Live Telemetry: ${telemetry}
           if (session) {
             try {
               session.sendRealtimeInput({
-                audio: { data: parsed.audio, mimeType: 'audio/pcm;rate=16000' },
+                media: { data: parsed.audio, mimeType: 'audio/pcm;rate=16000' },
+                audio: { data: parsed.audio, mimeType: 'audio/pcm;rate=16000' } as any,
               });
             } catch (err: any) {
               session = null;
@@ -2011,14 +1979,14 @@ Live Telemetry: ${telemetry}
                 turnComplete: true
               });
 
-              // Safety timer: if Live session takes longer than 4.5s to respond, fallback cleanly
+              // Safety timer: if Live session takes longer than 3.5s to respond, fallback cleanly
               pendingResponseTimeout = setTimeout(() => {
                 if (!turnHasReplied && pendingTextForTurn) {
                   const fallbackText = pendingTextForTurn;
                   pendingTextForTurn = null;
                   handleFallbackChatResponse(fallbackText, allowSearch);
                 }
-              }, 4500);
+              }, 3500);
               return;
             } catch (liveSendErr) {
               session = null;

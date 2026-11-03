@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrainCircuit, AlertCircle, CheckCircle2, Zap, Thermometer, Gauge, Activity, Bluetooth, AlertTriangle, ShieldCheck, ShieldAlert, Info, Usb, ExternalLink, Sparkles, Download, Check, Loader2, Box } from 'lucide-react';
+import { BrainCircuit, AlertCircle, CheckCircle2, Zap, Thermometer, Gauge, Activity, Bluetooth, AlertTriangle, ShieldCheck, ShieldAlert, Info, Usb, ExternalLink, Sparkles, Download, Check, Loader2 } from 'lucide-react';
 import { OBDData, SubscriptionTier } from '../types';
 import { runAIDiagnosis, fetchDTCDefinition } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
@@ -26,7 +26,6 @@ interface OBDTabProps {
   vehicleModel?: string;
   googleAccessToken?: string | null;
   onLinkDrive?: () => Promise<any> | void;
-  onOpen3DStudio?: () => void;
 }
 
 export default function OBDTab({ 
@@ -47,7 +46,6 @@ export default function OBDTab({
   vehicleModel,
   googleAccessToken,
   onLinkDrive,
-  onOpen3DStudio
 }: OBDTabProps) {
   const [localDiagnosis, setLocalDiagnosis] = useState<string | null>(null);
   const [localIsAnalyzing, setLocalIsAnalyzing] = useState(false);
@@ -289,18 +287,18 @@ ${diagnosis}
 
   return (
     <div className="space-y-5 pt-1">
-      {/* Unobstructed DriveLogic Brand & Vehicle Command Header */}
-      <div className="glass-card p-4 rounded-2xl border border-emerald-500/25 bg-gradient-to-r from-emerald-950/40 via-car-card to-car-card flex items-center justify-between gap-3 shadow-lg">
+      {/* Unobstructed DriveLogic Telemetry Status Header */}
+      <div className="glass-card p-3.5 sm:p-4 rounded-2xl border border-emerald-500/25 bg-gradient-to-r from-emerald-950/40 via-car-card to-car-card flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-lg">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
-            <Sparkles size={20} />
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+            <Sparkles size={18} />
           </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="text-base sm:text-lg font-extrabold tracking-tight text-white truncate">
-                DriveLogic
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base sm:text-lg font-extrabold tracking-tight text-white whitespace-nowrap">
+                DriveLogic Telemetry
               </h2>
-              <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
+              <span className="px-2 py-0.5 rounded-full text-[8.5px] font-mono font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
                 Eclipse Voice
               </span>
             </div>
@@ -309,13 +307,13 @@ ${diagnosis}
             </p>
           </div>
         </div>
-        <div className="flex flex-col items-end shrink-0">
+        <div className="flex items-center justify-between sm:justify-end gap-2 pt-1 sm:pt-0 border-t sm:border-t-0 border-white/5 shrink-0">
           <span className="text-[9px] font-mono uppercase tracking-wider text-emerald-400 flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
             Search Grounded
           </span>
-          <span className="text-[9px] font-mono text-white/40 mt-0.5">
-            Say "Hey, DriveLogic"
+          <span className="text-[9px] font-mono text-white/40">
+            "Hey, DriveLogic"
           </span>
         </div>
       </div>
@@ -349,7 +347,7 @@ ${diagnosis}
           </div>
           <button 
             onClick={() => window.open(window.location.href, '_blank')}
-            className="w-full flex items-center justify-center gap-2 py-2 bg-car-accent text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-car-accent/80 transition-all shadow-lg shadow-car-accent/20"
+            className="w-full flex items-center justify-center gap-2 py-2 bg-car-accent text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-car-accent/80 transition-all shadow-lg shadow-car-accent/20 cursor-pointer"
           >
             <ExternalLink size={12} /> Optimization: Open in New Tab
           </button>
@@ -366,34 +364,34 @@ ${diagnosis}
             className="w-full h-auto object-cover object-top scale-150 origin-top"
           />
         </div>
-        <div className={cn("flex items-center justify-between p-4 rounded-2xl border transition-all duration-500", status.bg, status.color.replace('text-', 'border-').replace('text-white/40', 'border-white/10'))}>
-          <div className="flex items-center gap-3">
-            <div className={cn("p-2 rounded-lg bg-white/5")}>
+        <div className={cn("flex flex-col sm:flex-row sm:items-center justify-between p-3.5 sm:p-4 rounded-2xl border transition-all duration-500 gap-3", status.bg, status.color.replace('text-', 'border-').replace('text-white/40', 'border-white/10'))}>
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className={cn("p-2 rounded-lg bg-white/5 shrink-0")}>
               <status.icon size={18} />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <div className={cn("w-2 h-2 rounded-full", status.dot)} />
-                <span className="text-xs font-bold uppercase tracking-widest">{status.label}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className={cn("w-2 h-2 rounded-full shrink-0", status.dot)} />
+                <span className="text-xs font-bold uppercase tracking-widest text-white whitespace-nowrap">{status.label}</span>
                 {data.deviceName && (
-                  <span className="px-1.5 py-0.5 rounded bg-car-accent/20 text-car-accent text-[9px] font-mono">
+                  <span className="px-1.5 py-0.5 rounded bg-car-accent/20 text-car-accent text-[9px] font-mono truncate max-w-[140px]">
                     {data.deviceName}
                   </span>
                 )}
               </div>
-              <p className="text-[10px] opacity-60 font-mono">
+              <p className="text-[10px] opacity-60 font-mono truncate">
                 {connectionStatus === 'connecting' ? 'Auto-detecting ELM327 BLE & sensing protocol...' : 
                  connectionStatus === 'connected' ? `Protocol: ${data.detectedProtocol || 'AUTO, ISO 15765-4 (CAN 11/500)'}` : 'Auto-detects ELM327 BLE or connect manually'}
               </p>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button 
               onClick={handleConnect}
-              className="px-3 py-1.5 bg-car-accent text-white rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-car-accent/80 transition-colors flex items-center gap-1 cursor-pointer"
+              className="flex-1 sm:flex-initial px-3 py-1.5 bg-car-accent text-white rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-car-accent/80 transition-colors flex items-center justify-center gap-1 cursor-pointer"
               title="Auto-Detect & Connect ELM327 BLE Module"
             >
-              <Bluetooth className="w-3 h-3" /> {connectionStatus === 'connected' ? 'RE-SCAN BLE' : 'ELM327 BLE'}
+              <Bluetooth className="w-3 h-3" /> {connectionStatus === 'connected' ? 'RE-SCAN' : 'ELM327 BLE'}
             </button>
             <button 
               onClick={async () => {
@@ -404,7 +402,7 @@ ${diagnosis}
                   setConnectionError(err instanceof Error ? err.message : 'Failed to connect via USB');
                 }
               }}
-              className="px-3 py-1.5 bg-car-purple text-white rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-car-purple/80 transition-colors flex items-center gap-1 cursor-pointer"
+              className="px-3 py-1.5 bg-car-purple text-white rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-car-purple/80 transition-colors flex items-center justify-center gap-1 cursor-pointer"
               title="Connect via 1260 USB Serial Cable"
             >
               <Usb className="w-3 h-3" /> USB
@@ -458,30 +456,6 @@ ${diagnosis}
           </div>
         ))}
       </div>
-
-      {/* 3D Digital Twin Quick Launch */}
-      {onOpen3DStudio && (
-        <button
-          onClick={onOpen3DStudio}
-          className="w-full p-3.5 bg-gradient-to-r from-cyan-950/40 via-car-card to-car-card border border-cyan-500/20 hover:border-cyan-500/40 rounded-3xl flex items-center justify-between text-left transition-all group shadow-lg shadow-cyan-950/20 cursor-pointer"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 group-hover:scale-105 transition-transform shrink-0">
-              <Box size={20} />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-white tracking-wide flex items-center gap-1.5">
-                3D Digital Twin Studio
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono font-normal">PBR</span>
-              </p>
-              <p className="text-[10px] text-white/50 font-mono">Live telemetry rotation, exploded view & diagnostics</p>
-            </div>
-          </div>
-          <span className="text-[10px] font-mono text-cyan-400 uppercase tracking-widest px-2.5 py-1 bg-cyan-500/10 rounded-lg border border-cyan-500/20 group-hover:bg-cyan-500/20 transition-colors shrink-0">
-            Inspect →
-          </span>
-        </button>
-      )}
 
       {/* ELM327 BLE Auto-Detection & Vehicle Protocol Auto-Sensing Card */}
       <div className="p-3.5 rounded-2xl bg-black/40 border border-white/10 space-y-2.5">

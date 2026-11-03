@@ -24,7 +24,7 @@ interface Message {
 }
 
 interface ChatAssistantProps {
-  onTabChange: (tab: 'obd' | 'scene3d' | 'damage' | 'gps' | 'maintenance') => void;
+  onTabChange: (tab: 'obd' | 'damage' | 'gps' | 'maintenance') => void;
   onSetNavigation: (from: string, to: string) => void;
   onDiagnose: () => Promise<string> | any;
   onToggleRecording: (start: boolean) => void;
