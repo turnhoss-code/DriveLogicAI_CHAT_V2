@@ -104,7 +104,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
   obdData,
   navigation
 }: LiveChatAssistantProps, ref) => {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
   const [isMini, setIsMini] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [isMicActive, setIsMicActive] = useState(false);
@@ -366,8 +366,6 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
     open: () => {
       setIsOpen(true);
       setIsMini(false);
-      ensureOutputAudio();
-      speakGreeting(true, true);
     },
     close: () => {
       setIsOpen(false);
@@ -1063,7 +1061,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
   };
 
   // Speak DriveLogic greeting helper using Eclipse Neural Female Voice (Kore)
-  const speakGreeting = useCallback((appendTranscript = false, autoStartMicAfter = false) => {
+  const speakGreeting = useCallback((appendTranscript = false) => {
     if (appendTranscript) {
       setLiveTranscript(prev => {
         const last = prev[prev.length - 1];
@@ -1071,57 +1069,36 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
         return [...prev, { id: Math.random().toString(), sender: 'ai', text: DRIVE_LOGIC_GREETING, timestamp: Date.now() }];
       });
     }
-    const onGreetingComplete = () => {
-      setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle');
-      if (autoStartMicAfter && !isMicActiveRef.current) {
-        startMic().catch(() => {});
-      }
-    };
     if (voiceVolume !== 'mute' && typeof window !== 'undefined') {
       try {
         setActiveSpeechState('speaking');
         ensureOutputAudio();
-        speakWithEclipseTTS(
-          DRIVE_LOGIC_GREETING,
-          outputAudioCtxRef.current,
-          outputAnalyserRef.current || undefined,
-          onGreetingComplete
-        );
+        if (outputAudioCtxRef.current && outputAnalyserRef.current) {
+          speakWithEclipseTTS(
+            DRIVE_LOGIC_GREETING,
+            outputAudioCtxRef.current,
+            outputAnalyserRef.current,
+            () => setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle')
+          );
+        }
       } catch {
-        onGreetingComplete();
+        setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle');
       }
-    } else {
-      onGreetingComplete();
     }
   }, [voiceVolume]);
 
-  // Automatically enable chat, speak "Hi, I'm DriveLogic. How can I assist you?", and activate hands-free mic on load
+  // Automatically speak "Hi, I'm DriveLogic. How can I assist you?" as soon as the app loads
   useEffect(() => {
     if (hasSpokenInitialGreetingRef.current) return;
     hasSpokenInitialGreetingRef.current = true;
 
-    let unlockedByGesture = false;
-
     const timer = setTimeout(() => {
-      const ctxSuspended = outputAudioCtxRef.current?.state === 'suspended';
-      speakGreeting(false, true);
-      if (ctxSuspended) {
-        // Keep gesture listener ready if browser blocked autoplay before user click
-        unlockedByGesture = false;
-      }
-    }, 350);
+      speakGreeting(false);
+    }, 600);
 
-    // Gesture listener ensures immediate audible greeting & mic activation if browser deferred autoplay
+    // Also attach a one-time gesture listener in case browser autoplay policy deferred AudioContext
     const unlockAndSpeak = () => {
-      if (unlockedByGesture) return;
-      unlockedByGesture = true;
-      const wasSuspended = !outputAudioCtxRef.current || outputAudioCtxRef.current.state === 'suspended';
       ensureOutputAudio();
-      if (wasSuspended) {
-        speakGreeting(false, true);
-      } else if (!isMicActiveRef.current) {
-        startMic().catch(() => {});
-      }
       window.removeEventListener('pointerdown', unlockAndSpeak);
       window.removeEventListener('keydown', unlockAndSpeak);
     };
@@ -1545,8 +1522,6 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
             onClick={() => {
               setIsOpen(true);
               setIsMini(false);
-              ensureOutputAudio();
-              speakGreeting(true, true);
             }}
             className="px-3.5 py-2 rounded-full bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 text-white shadow-[0_4px_20px_rgba(16,185,129,0.35)] flex items-center gap-2 hover:scale-105 active:scale-95 transition-all duration-200 group border border-emerald-400/40 cursor-pointer"
             title='Open DriveLogic Live Voice Chat (Eclipse Female Voice • Google Search & 911 Radar Grounded)'
