@@ -31,12 +31,16 @@ android {
 
     signingConfigs {
         release {
-            def keystoreFile = file("release-key.jks")
-            if (keystoreFile.exists()) {
+            def injectedStoreFile = project.findProperty("android.injected.signing.store.file")
+            def keystoreFile = injectedStoreFile ? file(injectedStoreFile) : file("release-key.jks")
+            def ksPassword = System.getenv("KEY_STORE_PASSWORD") ?: project.findProperty("android.injected.signing.store.password") ?: ""
+            def kAlias = System.getenv("KEY_ALIAS") ?: project.findProperty("android.injected.signing.key.alias") ?: ""
+            def kPassword = System.getenv("KEY_PASSWORD") ?: project.findProperty("android.injected.signing.key.password") ?: ""
+            if (keystoreFile.exists() && keystoreFile.length() > 0 && ksPassword && kAlias && kPassword) {
                 storeFile keystoreFile
-                storePassword System.getenv("KEY_STORE_PASSWORD") ?: ""
-                keyAlias System.getenv("KEY_ALIAS") ?: ""
-                keyPassword System.getenv("KEY_PASSWORD") ?: ""
+                storePassword ksPassword.toString()
+                keyAlias kAlias.toString()
+                keyPassword kPassword.toString()
             }
         }
     }
@@ -47,9 +51,9 @@ android {
             minifyEnabled false
             // Defines the ProGuard rule files to be applied if minifyEnabled is set to true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            // Apply the release signing configuration only when the keystore is present.
-            // CI provides the signing values via injected Gradle properties; local builds can run without them.
-            if (signingConfigs.release.storeFile != null && signingConfigs.release.storeFile.exists()) {
+            // Apply the release signing configuration only when the keystore and credentials are present.
+            // CI provides the signing values via env vars or injected Gradle properties; local builds can run without them.
+            if (signingConfigs.release.storeFile != null && signingConfigs.release.storeFile.exists() && signingConfigs.release.storeFile.length() > 0 && signingConfigs.release.storePassword) {
                 signingConfig signingConfigs.release
             }
         }

@@ -5,7 +5,7 @@ import { processVoiceCommand } from '../services/geminiService';
 import { cn } from '../lib/utils';
 import { PostCommandActions } from '../types';
 
-export type ChatModel = 'gemini-3.8-flash' | 'gemini-3.1-pro-preview' | 'gemini-3.1-flash-lite';
+export type ChatModel = 'gemini-3.8-flash' | 'gemini-4-argon' | 'gemini-3.1-pro-preview' | 'gemini-3.1-flash-lite';
 export type ChatRole = 'general' | 'diagnostics' | 'telemetry';
 
 export interface MessageSource {
@@ -24,7 +24,7 @@ interface Message {
 }
 
 interface ChatAssistantProps {
-  onTabChange: (tab: 'obd' | 'damage' | 'gps' | 'maintenance') => void;
+  onTabChange: (tab: 'obd' | 'scene3d' | 'damage' | 'gps' | 'maintenance') => void;
   onSetNavigation: (from: string, to: string) => void;
   onDiagnose: () => Promise<string> | any;
   onToggleRecording: (start: boolean) => void;
@@ -558,19 +558,19 @@ const ChatAssistant = forwardRef<ChatAssistantHandle, ChatAssistantProps>(({
                   <button
                     type="button"
                     onClick={() => {
-                      setSelectedModel('gemini-3.1-pro-preview');
+                      setSelectedModel('gemini-4-argon');
                       setSelectedRole('diagnostics');
                     }}
                     className={cn(
                       "px-2 py-0.5 rounded-full flex items-center gap-1 transition-all cursor-pointer",
-                      selectedModel === 'gemini-3.1-pro-preview'
+                      selectedModel === 'gemini-4-argon' || selectedModel === 'gemini-3.1-pro-preview'
                         ? "bg-purple-500/20 border border-purple-500/60 text-purple-300 font-bold"
                         : "bg-white/5 text-white/50 hover:text-white"
                     )}
-                    title="gemini-3.1-pro-preview: Deep diagnostic reasoning & mechanical analysis"
+                    title="gemini-4-argon: Complex diagnostic reasoning & deep mechanical analysis"
                   >
                     <Cpu size={9} />
-                    <span>3.1 Pro</span>
+                    <span>4 Argon</span>
                   </button>
 
                   <button

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Activity, Gauge, Map as MapIcon, History, Play, Square, BrainCircuit, AlertTriangle, ChevronRight, Settings, X, Key, Wrench, AlertCircle, CreditCard } from 'lucide-react';
+import { Activity, Gauge, Map as MapIcon, History, Play, Square, BrainCircuit, AlertTriangle, ChevronRight, Settings, X, Key, Wrench, AlertCircle, CreditCard, Box, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { OBDData, Trip, DamagePoint, TripEvent, SensorPoint, NavigationState, PostCommandActions } from './types';
 import { cn } from './lib/utils';
@@ -14,6 +14,7 @@ import GPSTab from './components/GPSTab';
 import FloatingMap from './components/FloatingMap';
 import LiveChatAssistant, { LiveChatAssistantHandle } from './components/LiveChatAssistant';
 import { AIChatbot } from './components/AIChatbot';
+import { VehicleScene3D } from './components/VehicleScene3D';
 import MaintenanceTab from './components/MaintenanceTab';
 import SubscriptionTab from './components/SubscriptionTab';
 import { runAIDiagnosis } from './services/geminiService';
@@ -21,10 +22,10 @@ import { MaintenanceTask } from './types';
 import { TripSummaryModal } from './components/TripSummaryModal';
 import { INITIAL_SEED_TRIPS } from './data/seedTrips';
 import { useJsApiLoader } from '@react-google-maps/api';
-import { auth, googleProvider, db } from './firebase';
+import { auth, googleProvider, db, signInWithGooglePopupSafe, getCachedAccessToken, clearCachedAccessToken } from './firebase';
 
 const GOOGLE_MAPS_LIBRARIES: ('places' | 'geometry')[] = ['places', 'geometry'];
-import { signInWithPopup, onAuthStateChanged, User, signOut, GoogleAuthProvider } from 'firebase/auth';
+import { onAuthStateChanged, User, signOut } from 'firebase/auth';
 import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from './lib/firestore';
 import { GoogleDriveFile, createDriveFile, listDriveFiles, deleteDriveFile, downloadDriveFile } from './services/googleDriveService';
@@ -60,7 +61,7 @@ export default function App() {
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const chatAssistantRef = useRef<LiveChatAssistantHandle>(null);
   const [isChatbotOpen, setIsChatbotOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'obd' | 'damage' | 'gps' | 'maintenance' | 'subscription'>('obd');
+  const [activeTab, setActiveTab] = useState<'obd' | 'scene3d' | 'damage' | 'gps' | 'maintenance' | 'subscription'>('obd');
   const [obdData, setObdData] = useState<OBDData>({
     rpm: 0,
     speed: 0,
@@ -78,7 +79,13 @@ export default function App() {
       oxygenSensor: true,
     },
     timestamp: Date.now(),
+    detectedProtocol: 'AUTO, ISO 15765-4 (CAN 11/500)',
+    deviceName: 'ELM327 BLE Auto-Sense',
+    protocolStatus: 'locked',
   });
+  const lastKnownCoordsRef = useRef<{ lat: number; lng: number }>({ lat: 34.0522, lng: -118.2437 });
+  const gravityRef = useRef<{ x: number; y: number; z: number }>({ x: 0, y: 0, z: 9.81 });
+  const lastDamageLogTimeRef = useRef<number>(0);
   const [navigation, setNavigation] = useState<NavigationState>({
     from: '',
     to: '',
@@ -146,31 +153,49 @@ export default function App() {
     return localStorage.getItem('ztcd_vehicle_model') || '2023 Toyota Camry';
   });
 
-  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(() => getCachedAccessToken());
   const [driveBackups, setDriveBackups] = useState<GoogleDriveFile[]>([]);
   const [isLoadingBackups, setIsLoadingBackups] = useState(false);
+  const [isLinkingDrive, setIsLinkingDrive] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const [backupStatusMsg, setBackupStatusMsg] = useState<string | null>(null);
 
   const [loginError, setLoginError] = useState<string | null>(null);
 
   const linkGoogleDrive = async () => {
+    if (isLinkingDrive || isSigningIn) {
+      return googleAccessToken || getCachedAccessToken();
+    }
+    setIsLinkingDrive(true);
+    setBackupStatusMsg("Opening Google Drive authorization...");
     try {
-      setBackupStatusMsg(null);
-      const result = await signInWithPopup(auth, googleProvider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken) {
-        setGoogleAccessToken(credential.accessToken);
+      const result = await signInWithGooglePopupSafe();
+      if (result?.accessToken) {
+        setGoogleAccessToken(result.accessToken);
         setBackupStatusMsg("Connected Google Drive successfully!");
-        setTimeout(() => setBackupStatusMsg(null), 3000);
-        return credential.accessToken;
+        setTimeout(() => setBackupStatusMsg(null), 3500);
+        return result.accessToken;
+      } else {
+        setBackupStatusMsg("Signed in, but Google Drive token was not granted. Please try again.");
       }
     } catch (error: any) {
-      console.error("Failed to link Google Drive", error);
-      if (error?.code === 'auth/cancelled-popup-request' || error?.code === 'auth/popup-blocked' || error?.message?.includes('INTERNAL ASSERTION FAILED') || error?.message?.includes('popup-blocked')) {
-        setBackupStatusMsg("Google Drive connection failed: Please open this app in a new tab to bypass iframe security limits.");
+      const code = error?.code || '';
+      const msg = error?.message || String(error);
+      if (code === 'auth/popup-closed-by-user') {
+        setBackupStatusMsg("Google Drive sign-in window was closed before completing.");
+      } else if (
+        code === 'auth/cancelled-popup-request' ||
+        code === 'auth/popup-blocked' ||
+        code === 'auth/web-storage-unsupported' ||
+        msg.includes('INTERNAL ASSERTION FAILED') ||
+        msg.includes('popup-blocked')
+      ) {
+        setBackupStatusMsg("Browser blocked the popup inside this preview frame. Click 'Open in New Tab' to connect Google Drive.");
       } else {
-        setBackupStatusMsg(`Connection failed: ${error?.message || error}`);
+        setBackupStatusMsg(`Google Drive connection unavailable: ${msg}`);
       }
+    } finally {
+      setIsLinkingDrive(false);
     }
     return null;
   };
@@ -350,19 +375,55 @@ export default function App() {
       } else {
         setUser(prev => (prev && (prev as any).isDemo) ? prev : null);
         setIsAuthLoading(false);
+        clearCachedAccessToken();
         setGoogleAccessToken(null);
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // Start voice assistant on mount
+  // Auto-detect and reconnect previously authorized ELM327 BLE modules on startup
   useEffect(() => {
     if (!user) return;
-    const timer = setTimeout(() => {
-      chatAssistantRef.current?.toggleMic();
-    }, 1000);
-    return () => clearTimeout(timer);
+    const autoDetectELM327 = async () => {
+      try {
+        const bt = navigator.bluetooth as any;
+        if (bt && typeof bt.getDevices === 'function') {
+          const devices: BluetoothDevice[] = await bt.getDevices();
+          const elmDevice = devices.find(d =>
+            !d.name || /obd|elm|vlink|ios-vlink|viecar|konnwei|carista|ble/i.test(d.name)
+          ) || devices[0];
+          if (elmDevice && elmDevice.gatt) {
+            setConnectionStatus('connecting');
+            setObdData(prev => ({
+              ...prev,
+              deviceName: elmDevice.name || 'ELM327 BLE Adapter',
+              protocolStatus: 'auto_sensing',
+            }));
+            const server = await elmDevice.gatt.connect();
+            const services = await server.getPrimaryServices();
+            if (services.length > 0) {
+              const characteristics = await services[0].getCharacteristics();
+              let writeChar: BluetoothRemoteGATTCharacteristic | undefined;
+              let notifyChar: BluetoothRemoteGATTCharacteristic | undefined;
+              for (const char of characteristics) {
+                if (char.properties.write || char.properties.writeWithoutResponse) writeChar = char;
+                if (char.properties.notify || char.properties.indicate) notifyChar = char;
+              }
+              if (writeChar && notifyChar) {
+                setBluetoothDevice(elmDevice);
+                setIsSimulation(false);
+                setConnectionStatus('connected');
+                startOBDPoll(writeChar, notifyChar, elmDevice.name || 'ELM327 BLE');
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.debug('ELM327 background auto-sense standby:', err);
+      }
+    };
+    autoDetectELM327();
   }, [user]);
 
   // Simulation logic
@@ -380,6 +441,7 @@ export default function App() {
         const targetSpeed = isRecording ? 40 + Math.random() * 20 : 0;
         
         return {
+          ...prev,
           rpm: Math.round(prev.rpm + (targetRpm - prev.rpm) * 0.1),
           speed: Math.round(prev.speed + (targetSpeed - prev.speed) * 0.1),
           coolantTemp: 90 + Math.sin(Date.now() / 10000) * 2,
@@ -392,48 +454,84 @@ export default function App() {
         };
       });
 
-      // Sensor simulation (Accel & Gyro) - Toned down
-      const accel = isRecording ? 0.2 + Math.random() * 0.8 : 0.05 + Math.random() * 0.1;
+      // Sensor simulation (Accel & Gyro)
+      const accel = isRecording ? 0.2 + Math.random() * 0.9 : 0.05 + Math.random() * 0.12;
+      const vibrationRms = Number((accel * 0.42).toFixed(2));
       const rotation = isRecording ? 5 + Math.random() * 20 : 0.5 + Math.random() * 2;
 
       setSensorHistory(prev => {
-        const newHistory = [...prev, { accel, gyro: rotation, timestamp: Date.now() }];
+        const newHistory = [...prev, { accel, gyro: rotation, vibrationRms, timestamp: Date.now() }];
         return newHistory.slice(-60);
       });
 
-      // Damage score simulation based on "driving behavior" - Toned down
+      // Damage score simulation based on driving behavior & road vibration
       setDamageScore(prev => {
-        let delta = (Math.random() - 0.5) * 0.5; // Smaller random fluctuations
-        if (isRecording && (accel > 1.2 || rotation > 35)) delta += 5; // Less frequent and smaller "Harsh event"
+        let delta = (Math.random() - 0.5) * 0.5;
+        if (isRecording && (accel > 0.95 || rotation > 35)) delta += 4;
         const next = Math.max(0, Math.min(100, prev + delta));
+        const pointLat = lastKnownCoordsRef.current.lat + (Math.random() - 0.5) * 0.004;
+        const pointLng = lastKnownCoordsRef.current.lng + (Math.random() - 0.5) * 0.004;
         
-        setDamageHistory(history => {
-          const newHistory = [...history, { score: next, timestamp: Date.now() }];
-          return newHistory.slice(-60);
-        });
+        if (accel > 0.95) {
+          const sev: 'minor' | 'moderate' | 'severe' = accel > 1.35 ? 'severe' : accel > 1.05 ? 'moderate' : 'minor';
+          const newPoint: DamagePoint = {
+            id: `sim-dp-${Date.now()}`,
+            score: next,
+            timestamp: Date.now(),
+            gForce: Number(accel.toFixed(2)),
+            vibrationRms,
+            lat: pointLat,
+            lng: pointLng,
+            speed: obdData.speed || 42,
+            severity: sev,
+            label: sev === 'severe' ? 'Severe Road Shock / Pothole' : 'Road Surface Vibration Anomaly',
+          };
+          setDamageHistory(history => [...history, newPoint].slice(-60));
+        }
 
         if (isRecording) {
           setCurrentTrip(trip => {
             if (!trip) return trip;
             
             let newEvents = trip.events || [];
+            const lastWaypoint = trip.waypoints?.[trip.waypoints.length - 1];
+            const loc = lastWaypoint
+              ? { lat: lastWaypoint.lat, lng: lastWaypoint.lng }
+              : { lat: pointLat, lng: pointLng };
             
-            // Occasionally simulate an event if damage is high
             if (next > 40 && Math.random() > 0.7) {
               const rand = Math.random();
               const eventType = rand > 0.66 ? 'harsh_braking' : rand > 0.33 ? 'rapid_acceleration' : 'harsh_cornering';
-              const lastWaypoint = trip.waypoints?.[trip.waypoints.length - 1];
               newEvents = [...newEvents, {
                 type: eventType as any,
                 severity: next,
                 timestamp: Date.now(),
-                location: lastWaypoint ? { lat: lastWaypoint.lat, lng: lastWaypoint.lng } : undefined
+                location: loc
               }];
             }
 
+            const shouldLogDp = accel > 0.85;
+            const updatedDamageHistory = shouldLogDp
+              ? [
+                  ...(trip.damageHistory || []),
+                  {
+                    id: `dp-${Date.now()}`,
+                    score: next,
+                    timestamp: Date.now(),
+                    gForce: Number(accel.toFixed(2)),
+                    vibrationRms,
+                    lat: loc.lat,
+                    lng: loc.lng,
+                    speed: obdData.speed || 45,
+                    severity: (accel > 1.3 ? 'severe' : accel > 1.0 ? 'moderate' : 'minor') as 'minor' | 'moderate' | 'severe',
+                    label: accel > 1.3 ? 'Severe Suspension Impact' : 'Chassis Vibration Spike',
+                  }
+                ]
+              : (trip.damageHistory || []);
+
             return {
               ...trip,
-              damageHistory: [...(trip.damageHistory || []), { score: next, timestamp: Date.now() }],
+              damageHistory: updatedDamageHistory,
               events: newEvents,
             };
           });
@@ -444,7 +542,7 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isRecording]);
+  }, [isSimulation, isRecording]);
 
   // Real GPS Tracking
   useEffect(() => {
@@ -454,6 +552,7 @@ export default function App() {
       watchId = navigator.geolocation.watchPosition(
         (position) => {
           const { latitude, longitude } = position.coords;
+          lastKnownCoordsRef.current = { lat: latitude, lng: longitude };
           
           setCurrentTrip(trip => {
             if (!trip) return trip;
@@ -507,8 +606,8 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('ztcd_trips', JSON.stringify(trips));
     
-    // Sync to Firestore if user is authenticated
-    if (user && !isAuthLoading && trips.length > 0) {
+    // Sync to Firestore if user is authenticated (skip for local Demo Mode)
+    if (user && !(user as any).isDemo && !isAuthLoading && trips.length > 0) {
       updateDoc(doc(db, 'users', user.uid), {
         trips: trips,
         updatedAt: Date.now()
@@ -519,9 +618,9 @@ export default function App() {
             createdAt: Date.now(),
             updatedAt: Date.now(),
             trips: trips
-          }, { merge: true }).catch(console.error);
+          }, { merge: true }).catch((e) => console.warn("Could not create user trips doc", e));
         } else {
-          console.error("Failed to sync trips to Firestore", err);
+          console.warn("Could not sync trips to Firestore:", err?.message || err);
         }
       });
     }
@@ -563,47 +662,156 @@ export default function App() {
   };
 
   const tabs = [
-    { id: 'obd', label: 'OBD Diagnosis', icon: Gauge },
-    { id: 'damage', label: 'Damage Log', icon: Activity },
-    { id: 'gps', label: 'GPS Routes', icon: MapIcon },
-    { id: 'maintenance', label: 'Maintenance', icon: Wrench },
-    { id: 'subscription', label: 'Subscription', icon: CreditCard },
+    { id: 'obd', label: 'OBD', icon: Gauge },
+    { id: 'scene3d', label: '3D Studio', icon: Box },
+    { id: 'damage', label: 'Damage', icon: Activity },
+    { id: 'gps', label: 'GPS', icon: MapIcon },
+    { id: 'maintenance', label: 'Service', icon: Wrench },
+    { id: 'subscription', label: 'Pro', icon: CreditCard },
   ] as const;
 
-  // Real Sensor Collection (Accel & Gyro)
+  const logManualOrSensorDamagePoint = (
+    severity: 'minor' | 'moderate' | 'severe' = 'moderate',
+    label = 'Accelerometer Road Impact',
+    gForceOverride?: number,
+    vibrationRmsOverride?: number
+  ) => {
+    const gForce = gForceOverride ?? (severity === 'severe' ? 1.85 : severity === 'moderate' ? 1.28 : 0.88);
+    const vibrationRms = vibrationRmsOverride ?? Number((gForce * 0.35).toFixed(2));
+    const scorePenalty = severity === 'severe' ? 14 : severity === 'moderate' ? 7 : 3;
+    const nextScore = Math.min(100, damageScore + scorePenalty);
+    setDamageScore(nextScore);
+
+    const coords = lastKnownCoordsRef.current;
+    const jitterLat = coords.lat + (Math.random() - 0.5) * 0.002;
+    const jitterLng = coords.lng + (Math.random() - 0.5) * 0.002;
+
+    const newDp: DamagePoint = {
+      id: `dp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      score: nextScore,
+      timestamp: Date.now(),
+      gForce: Number(gForce.toFixed(2)),
+      vibrationRms,
+      lat: jitterLat,
+      lng: jitterLng,
+      speed: obdData.speed || 38,
+      severity,
+      label,
+    };
+
+    setDamageHistory(prev => [...prev, newDp].slice(-100));
+    setSensorHistory(prev => [
+      ...prev,
+      { accel: gForce, gyro: severity === 'severe' ? 42 : 22, vibrationRms, timestamp: Date.now() }
+    ].slice(-120));
+
+    if (isRecording && currentTrip) {
+      setCurrentTrip(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          damageHistory: [...(prev.damageHistory || []), newDp],
+        };
+      });
+    } else if (trips.length > 0) {
+      // Save directly to the most recent trip so the user can immediately review it on the map & save to storage
+      setTrips(prev => {
+        const latest = prev[0];
+        if (!latest) return prev;
+        const updatedDamageHistory = [...(latest.damageHistory || []), newDp];
+        const avgScore =
+          updatedDamageHistory.reduce((acc, p) => acc + p.score, 0) / updatedDamageHistory.length;
+        const updatedTrip: Trip = {
+          ...latest,
+          damageHistory: updatedDamageHistory,
+          averageDamageScore: avgScore,
+        };
+        return [updatedTrip, ...prev.slice(1)];
+      });
+    }
+  };
+
+  const requestMotionPermission = () => {
+    if (typeof window !== 'undefined' && 'DeviceMotionEvent' in window) {
+      if (typeof (DeviceMotionEvent as any).requestPermission === 'function') {
+        (DeviceMotionEvent as any).requestPermission().catch(console.error);
+      }
+    }
+  };
+
+  // Real Mobile Accelerometer Vibration Sensor Collection (High-Pass Filtered)
   useEffect(() => {
     if (isSimulation) return;
 
     const handleMotion = (event: DeviceMotionEvent) => {
-      const acc = event.accelerationIncludingGravity;
+      const linearAcc = event.acceleration;
+      const gravityAcc = event.accelerationIncludingGravity;
       const rot = event.rotationRate;
-      
-      let totalAccel = 0;
-      let totalRot = 0;
 
-      if (acc) {
-        // Calculate G-force magnitude
-        totalAccel = Math.sqrt((acc.x || 0)**2 + (acc.y || 0)**2 + (acc.z || 0)**2) / 9.81;
+      let dynamicX = 0;
+      let dynamicY = 0;
+      let dynamicZ = 0;
+
+      if (linearAcc && (linearAcc.x !== null || linearAcc.y !== null || linearAcc.z !== null)) {
+        dynamicX = linearAcc.x || 0;
+        dynamicY = linearAcc.y || 0;
+        dynamicZ = linearAcc.z || 0;
+      } else if (gravityAcc) {
+        // Low-pass filter to estimate gravity, then subtract for high-pass road vibration
+        const alpha = 0.85;
+        const gx = gravityAcc.x || 0;
+        const gy = gravityAcc.y || 0;
+        const gz = gravityAcc.z || 0;
+        gravityRef.current.x = alpha * gravityRef.current.x + (1 - alpha) * gx;
+        gravityRef.current.y = alpha * gravityRef.current.y + (1 - alpha) * gy;
+        gravityRef.current.z = alpha * gravityRef.current.z + (1 - alpha) * gz;
+        dynamicX = gx - gravityRef.current.x;
+        dynamicY = gy - gravityRef.current.y;
+        dynamicZ = gz - gravityRef.current.z;
       }
 
+      // Dynamic vibration magnitude in G
+      const dynamicG = Math.sqrt(dynamicX ** 2 + dynamicY ** 2 + dynamicZ ** 2) / 9.81;
+      const vibrationRms = Number((dynamicG * 0.707).toFixed(3));
+
+      let totalRot = 0;
       if (rot) {
-        // Calculate rotation magnitude (deg/s)
-        totalRot = Math.sqrt((rot.alpha || 0)**2 + (rot.beta || 0)**2 + (rot.gamma || 0)**2);
+        totalRot = Math.sqrt((rot.alpha || 0) ** 2 + (rot.beta || 0) ** 2 + (rot.gamma || 0) ** 2);
       }
 
       setSensorHistory(prev => {
-        const newHistory = [...prev, { accel: totalAccel, gyro: totalRot, timestamp: Date.now() }];
-        return newHistory.slice(-120); // Keep longer history for better diagnosis
+        const newHistory = [
+          ...prev,
+          {
+            accel: Number(dynamicG.toFixed(3)),
+            gyro: totalRot,
+            vibrationRms,
+            x: dynamicX,
+            y: dynamicY,
+            z: dynamicZ,
+            timestamp: Date.now()
+          }
+        ];
+        return newHistory.slice(-120);
       });
 
-      // Simple real-time damage estimation
-      if (totalAccel > 1.5 || totalRot > 50) {
-        setDamageScore(prev => Math.min(100, prev + (isRecording ? 1 : 0.1)));
+      // Automatically log geo-tagged vibration damage point when dynamic G exceeds road shock threshold
+      const now = Date.now();
+      if ((dynamicG > 0.75 || totalRot > 55) && now - lastDamageLogTimeRef.current > 2500) {
+        lastDamageLogTimeRef.current = now;
+        const sev: 'minor' | 'moderate' | 'severe' =
+          dynamicG > 1.45 ? 'severe' : dynamicG > 1.05 ? 'moderate' : 'minor';
+        const label =
+          sev === 'severe'
+            ? 'Severe Accelerometer Shock / Pothole Impact'
+            : sev === 'moderate'
+            ? 'Moderate Road Surface Vibration Anomaly'
+            : 'Minor Chassis Vibration Spike';
+        logManualOrSensorDamagePoint(sev, label, dynamicG, vibrationRms);
       }
     };
 
     if (window.DeviceMotionEvent) {
-      // Request permission for iOS 13+
       if (typeof (DeviceMotionEvent as any).requestPermission === 'function') {
         (DeviceMotionEvent as any).requestPermission()
           .then((response: string) => {
@@ -620,9 +828,9 @@ export default function App() {
     return () => {
       window.removeEventListener('devicemotion', handleMotion);
     };
-  }, [isSimulation, isRecording]);
+  }, [isSimulation, isRecording, obdData.speed, damageScore]);
 
-  // Real OBD-II Connection Logic
+  // Real OBD-II ELM327 BLE Auto-Detection & Protocol Auto-Sensing
   const connectToOBD = async () => {
     try {
       if (!navigator.bluetooth) {
@@ -634,17 +842,27 @@ export default function App() {
         );
       }
 
-      // Broaden discovery to avoid "User cancelled" due to device not appearing in filtered list
+      setConnectionStatus('connecting');
+      setObdData(prev => ({
+        ...prev,
+        protocolStatus: 'scanning',
+        detectedProtocol: 'Scanning ELM327 BLE GATT...',
+      }));
+
+      const ELM327_SERVICES = [
+        '0000fff0-0000-1000-8000-00805f9b34fb', // Viecar / Vgate BLE
+        '0000ffe0-0000-1000-8000-00805f9b34fb', // HM-10 / IOS-Vlink ELM327 BLE
+        '000018f0-0000-1000-8000-00805f9b34fb', // Standard OBD-II BLE
+        '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART BLE ELM327
+        'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // Dual-mode ELM327 BLE
+      ];
+
       const device = await navigator.bluetooth.requestDevice({
         acceptAllDevices: true,
-        optionalServices: [
-          '0000fff0-0000-1000-8000-00805f9b34fb', 
-          '0000ffe0-0000-1000-8000-00805f9b34fb',
-          '000018f0-0000-1000-8000-00805f9b34fb' // Standard OBD-II service
-        ]
+        optionalServices: ELM327_SERVICES
       }).catch(err => {
         if (err.name === 'NotFoundError') {
-          throw new Error("No device selected or found. Ensure your OBD-II adapter is powered on and in pairing mode.");
+          throw new Error("No device selected or found. Ensure your ELM327 BLE adapter is powered on.");
         }
         if (err.name === 'SecurityError') {
           throw new Error("Bluetooth permission denied. Please allow Bluetooth access in your browser settings.");
@@ -652,51 +870,56 @@ export default function App() {
         throw err;
       });
 
-      setConnectionStatus('connecting');
-
-      if (!device) {
-        throw new Error("No device selected. Please try again.");
+      if (!device || !device.gatt) {
+        throw new Error("Selected BLE device does not expose a GATT server.");
       }
 
-      if (!device.gatt) {
-        throw new Error("GATT server is unavailable on this device.");
-      }
+      setObdData(prev => ({
+        ...prev,
+        deviceName: device.name || 'ELM327 BLE Module',
+        protocolStatus: 'auto_sensing',
+        detectedProtocol: 'Auto-Sensing Vehicle ECU Protocol (ATSP0)...',
+      }));
 
-      // Add a timeout to the connection attempt
       const connectPromise = device.gatt.connect();
       const timeoutPromise = new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error("Connection timed out. Please move closer to the adapter and try again.")), 10000)
+        setTimeout(() => reject(new Error("Connection timed out. Please move closer to the ELM327 adapter and try again.")), 10000)
       );
       
       const server = await Promise.race([connectPromise, timeoutPromise]);
       const services = await server.getPrimaryServices();
       
-      if (!services || services.length === 0) throw new Error("No compatible OBD-II services found on this device.");
+      if (!services || services.length === 0) throw new Error("No compatible ELM327 OBD-II services found on this device.");
       
-      const service = services[0];
-      const characteristics = await service.getCharacteristics();
       let writeChar: BluetoothRemoteGATTCharacteristic | undefined;
       let notifyChar: BluetoothRemoteGATTCharacteristic | undefined;
 
-      for (const char of characteristics) {
-        if (char.properties.write || char.properties.writeWithoutResponse) {
-          writeChar = char;
+      for (const service of services) {
+        const characteristics = await service.getCharacteristics();
+        for (const char of characteristics) {
+          if (!writeChar && (char.properties.write || char.properties.writeWithoutResponse)) {
+            writeChar = char;
+          }
+          if (!notifyChar && (char.properties.notify || char.properties.indicate)) {
+            notifyChar = char;
+          }
         }
-        if (char.properties.notify || char.properties.indicate) {
-          notifyChar = char;
-        }
+        if (writeChar && notifyChar) break;
       }
 
-      if (!writeChar || !notifyChar) throw new Error("No suitable communication characteristic found. The adapter may not be fully compatible.");
+      if (!writeChar || !notifyChar) throw new Error("No suitable ELM327 UART characteristics found.");
 
       setBluetoothDevice(device);
       setIsSimulation(false);
       setConnectionStatus('connected');
       
-      // Start polling loop
-      startOBDPoll(writeChar, notifyChar);
+      startOBDPoll(writeChar, notifyChar, device.name || 'ELM327 BLE Module');
     } catch (error) {
       setConnectionStatus('disconnected');
+      setObdData(prev => ({
+        ...prev,
+        protocolStatus: 'idle',
+      }));
       const message = error instanceof Error ? error.message : "An unexpected Bluetooth error occurred.";
       console.error("Bluetooth Error:", message);
       throw new Error(message);
@@ -706,14 +929,55 @@ export default function App() {
   const parseOBDResponse = (buffer: string) => {
     const lines = buffer.split(/[\r\n]+/);
     lines.forEach(line => {
-      const cleanLine = line.replace(/\s+/g, '').toUpperCase();
+      const rawTrimmed = line.trim().toUpperCase();
+      const cleanLine = rawTrimmed.replace(/\s+/g, '');
+
+      // Parse ELM327 Protocol Description (ATDP / ATDPN response)
+      if (
+        rawTrimmed.includes('ISO') ||
+        rawTrimmed.includes('CAN') ||
+        rawTrimmed.includes('SAE') ||
+        rawTrimmed.includes('J1850') ||
+        rawTrimmed.includes('KWP') ||
+        /^A?[1-9A-C]$/.test(cleanLine)
+      ) {
+        const protocolMap: Record<string, string> = {
+          '1': 'SAE J1850 PWM (41.6 kbaud)',
+          'A1': 'AUTO, SAE J1850 PWM (41.6 kbaud)',
+          '2': 'SAE J1850 VPW (10.4 kbaud)',
+          'A2': 'AUTO, SAE J1850 VPW (10.4 kbaud)',
+          '3': 'ISO 9141-2 (5 baud init)',
+          'A3': 'AUTO, ISO 9141-2 (5 baud init)',
+          '4': 'ISO 14230-4 KWP (5 baud init)',
+          'A4': 'AUTO, ISO 14230-4 KWP (5 baud init)',
+          '5': 'ISO 14230-4 KWP (fast init)',
+          'A5': 'AUTO, ISO 14230-4 KWP (fast init)',
+          '6': 'ISO 15765-4 (CAN 11/500)',
+          'A6': 'AUTO, ISO 15765-4 (CAN 11/500)',
+          '7': 'ISO 15765-4 (CAN 29/500)',
+          'A7': 'AUTO, ISO 15765-4 (CAN 29/500)',
+          '8': 'ISO 15765-4 (CAN 11/250)',
+          'A8': 'AUTO, ISO 15765-4 (CAN 11/250)',
+          '9': 'ISO 15765-4 (CAN 29/250)',
+          'A9': 'AUTO, ISO 15765-4 (CAN 29/250)',
+        };
+        const resolvedProtocol = protocolMap[cleanLine] || rawTrimmed.replace(/^>+/g, '').trim();
+        if (resolvedProtocol && resolvedProtocol.length > 2) {
+          setObdData(prev => ({
+            ...prev,
+            detectedProtocol: resolvedProtocol,
+            protocolStatus: 'locked',
+            timestamp: Date.now(),
+          }));
+        }
+      }
       
       // Parse Engine Load (0104 -> 41 04 A)
       if (cleanLine.includes('4104')) {
         const idx = cleanLine.indexOf('4104');
         const a = parseInt(cleanLine.substring(idx + 4, idx + 6), 16);
         if (!isNaN(a)) {
-          setObdData(prev => ({ ...prev, load: (a * 100) / 255, timestamp: Date.now() }));
+          setObdData(prev => ({ ...prev, load: (a * 100) / 255, protocolStatus: 'locked', timestamp: Date.now() }));
         }
       }
 
@@ -724,7 +988,7 @@ export default function App() {
         const b = parseInt(cleanLine.substring(idx + 6, idx + 8), 16);
         if (!isNaN(a) && !isNaN(b)) {
           const rpm = ((a * 256) + b) / 4;
-          setObdData(prev => ({ ...prev, rpm: Math.round(rpm), timestamp: Date.now() }));
+          setObdData(prev => ({ ...prev, rpm: Math.round(rpm), protocolStatus: 'locked', timestamp: Date.now() }));
         }
       }
       
@@ -733,7 +997,7 @@ export default function App() {
         const idx = cleanLine.indexOf('410D');
         const a = parseInt(cleanLine.substring(idx + 4, idx + 6), 16);
         if (!isNaN(a)) {
-          setObdData(prev => ({ ...prev, speed: a, timestamp: Date.now() }));
+          setObdData(prev => ({ ...prev, speed: a, protocolStatus: 'locked', timestamp: Date.now() }));
         }
       }
       
@@ -742,7 +1006,7 @@ export default function App() {
         const idx = cleanLine.indexOf('4105');
         const a = parseInt(cleanLine.substring(idx + 4, idx + 6), 16);
         if (!isNaN(a)) {
-          setObdData(prev => ({ ...prev, coolantTemp: a - 40, timestamp: Date.now() }));
+          setObdData(prev => ({ ...prev, coolantTemp: a - 40, protocolStatus: 'locked', timestamp: Date.now() }));
         }
       }
 
@@ -751,7 +1015,7 @@ export default function App() {
         const idx = cleanLine.indexOf('4111');
         const a = parseInt(cleanLine.substring(idx + 4, idx + 6), 16);
         if (!isNaN(a)) {
-          setObdData(prev => ({ ...prev, throttlePos: (a * 100) / 255, timestamp: Date.now() }));
+          setObdData(prev => ({ ...prev, throttlePos: (a * 100) / 255, protocolStatus: 'locked', timestamp: Date.now() }));
         }
       }
 
@@ -897,6 +1161,9 @@ export default function App() {
     queueCommand('ATL0');
     queueCommand('ATH0');
     queueCommand('ATSP0');
+    queueCommand('0100');
+    queueCommand('ATDP');
+    queueCommand('ATDPN');
 
     const pollInterval = setInterval(() => {
       if (!isPollingActive) {
@@ -915,7 +1182,7 @@ export default function App() {
     }, 1000);
   };
 
-  const startOBDPoll = async (writeChar: BluetoothRemoteGATTCharacteristic, notifyChar: BluetoothRemoteGATTCharacteristic) => {
+  const startOBDPoll = async (writeChar: BluetoothRemoteGATTCharacteristic, notifyChar: BluetoothRemoteGATTCharacteristic, deviceName = 'ELM327 BLE') => {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -923,6 +1190,12 @@ export default function App() {
     let commandQueue: string[] = [];
     let isProcessingQueue = false;
     let isPollingActive = true;
+
+    setObdData(prev => ({
+      ...prev,
+      deviceName,
+      protocolStatus: 'auto_sensing',
+    }));
 
     const processQueue = async () => {
       if (isProcessingQueue || commandQueue.length === 0 || isWaitingForPrompt || !isPollingActive) return;
@@ -970,12 +1243,15 @@ export default function App() {
       processQueue();
     };
 
-    // ELM327 Initial Setup
+    // ELM327 Initial Setup & Automatic Vehicle Protocol Sensing
     queueCommand('ATZ');    // Reset
     queueCommand('ATE0');   // Echo off
     queueCommand('ATL0');   // Linefeeds off
     queueCommand('ATH0');   // Headers off
-    queueCommand('ATSP0');  // Auto protocol
+    queueCommand('ATSP0');  // Auto-sense vehicle protocol
+    queueCommand('0100');   // Trigger ECU bus negotiation
+    queueCommand('ATDP');   // Describe detected protocol
+    queueCommand('ATDPN');  // Describe protocol by number
 
     // Polling Loop
     const pollInterval = setInterval(() => {
@@ -1042,16 +1318,32 @@ export default function App() {
   });
 
   const handleLogin = async () => {
+    if (isSigningIn || isLinkingDrive) return;
+    setIsSigningIn(true);
     try {
       setLoginError(null);
-      await signInWithPopup(auth, googleProvider);
-    } catch (error: any) {
-      console.error("Login failed", error);
-      if (error?.code === 'auth/cancelled-popup-request' || error?.code === 'auth/popup-blocked' || error?.message?.includes('INTERNAL ASSERTION FAILED') || error?.message?.includes('popup-blocked')) {
-        setLoginError("Login failed due to browser popup restrictions inside the preview window. Please open this app in a new tab to authenticate successfully.");
-      } else {
-        setLoginError(`Login failed: ${error?.message || error}`);
+      const result = await signInWithGooglePopupSafe();
+      if (result?.accessToken) {
+        setGoogleAccessToken(result.accessToken);
       }
+    } catch (error: any) {
+      const code = error?.code || '';
+      const msg = error?.message || String(error);
+      if (code === 'auth/popup-closed-by-user') {
+        setLoginError("Sign-in window was closed before completing. Click 'Sign in with Google' to try again, or use Demo Mode.");
+      } else if (
+        code === 'auth/cancelled-popup-request' ||
+        code === 'auth/popup-blocked' ||
+        code === 'auth/web-storage-unsupported' ||
+        msg.includes('INTERNAL ASSERTION FAILED') ||
+        msg.includes('popup-blocked')
+      ) {
+        setLoginError("Login failed due to browser popup restrictions inside the preview window. Please open this app in a new tab or use Demo Mode.");
+      } else {
+        setLoginError(`Login failed: ${msg}`);
+      }
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
@@ -1095,9 +1387,10 @@ export default function App() {
           <div className="w-full space-y-4">
             <button
               onClick={handleLogin}
-              className="w-full flex items-center justify-center gap-3 bg-white text-black py-4 rounded-2xl font-semibold hover:bg-gray-100 transition-colors cursor-pointer"
+              disabled={isSigningIn}
+              className="w-full flex items-center justify-center gap-3 bg-white text-black py-4 rounded-2xl font-semibold hover:bg-gray-100 disabled:opacity-60 transition-colors cursor-pointer"
             >
-              Sign in with Google
+              {isSigningIn ? 'Opening Google Sign-In...' : 'Sign in with Google'}
             </button>
 
             <button
@@ -1145,7 +1438,7 @@ export default function App() {
         />
         <div className="absolute inset-0 bg-gradient-to-t from-car-bg via-car-bg/85 to-car-bg/75" />
       </div>
-      {/* Header */}
+      {/* Header — Always Visible & Unobstructed on OBD and All Tabs */}
       <motion.header 
         drag="x"
         dragConstraints={{ left: 0, right: 0 }}
@@ -1155,58 +1448,74 @@ export default function App() {
             chatAssistantRef.current?.toggleMic();
           }
         }}
-        className="p-4 sm:p-6 pt-8 flex justify-between items-center border-b border-white/5 bg-car-card/50 backdrop-blur-md sticky top-0 z-50 cursor-grab active:cursor-grabbing gap-2"
+        className="px-4 py-3.5 pt-5 flex justify-between items-center border-b border-white/10 bg-car-card/85 backdrop-blur-xl sticky top-0 z-50 cursor-grab active:cursor-grabbing gap-2 shadow-md"
       >
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <div className="relative group shrink-0">
             <button 
               onClick={() => setShowSettings(true)}
-              className="p-2 rounded-xl bg-white/5 text-white/40 hover:text-white hover:bg-white/10 transition-all"
+              className="p-2 rounded-xl bg-white/5 text-white/60 hover:text-white hover:bg-white/10 transition-all cursor-pointer border border-white/10"
+              title="Open DriveLogic Settings"
             >
-              <Settings size={20} className="shrink-0" />
+              <Settings size={18} className="shrink-0" />
             </button>
-            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 px-2 py-1 bg-black text-white text-[10px] uppercase tracking-wider rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+            <div className="absolute left-0 top-full mt-2 px-2 py-1 bg-black text-white text-[10px] uppercase tracking-wider rounded border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
               {vehicleModel ? `Vehicle: ${vehicleModel}` : 'Configure Vehicle'}
             </div>
           </div>
-          <div className="min-w-0 hidden xs:block sm:block">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tighter text-white truncate">DriveLogicAI</h1>
-            <p className="text-[9px] sm:text-[10px] uppercase tracking-[0.2em] text-white/40 font-mono truncate hidden sm:block">Advanced Vehicle Intelligence</p>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-white truncate">
+                DriveLogic
+              </h1>
+              <span className="px-1.5 py-0.5 rounded-full text-[8px] font-mono font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
+                Eclipse
+              </span>
+            </div>
+            <p className="text-[9px] uppercase tracking-wider text-white/50 font-mono truncate">
+              {vehicleModel || 'Advanced Vehicle Intelligence'}
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button 
+            onClick={() => setIsChatbotOpen(true)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 text-[10px] font-semibold hover:bg-emerald-500/25 transition-all shadow-sm cursor-pointer"
+            title="Open DriveLogic Chat (Eclipse Female Voice • Google Search Grounded)"
+          >
+            <Sparkles size={11} className="shrink-0 text-emerald-400 animate-pulse" />
+            <span>DriveLogic</span>
+          </button>
+
           <button 
             onClick={() => setNavigation({ ...navigation, isActive: !navigation.isActive, from: navigation.from || 'Current Location' })}
             className={cn(
-              "flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full border text-[10px] sm:text-xs font-medium transition-all shrink-0",
+              "flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-[10px] font-medium transition-all shrink-0 cursor-pointer",
               navigation.isActive 
                 ? "bg-car-success/20 text-car-success border-car-success/30 animate-pulse" 
-                : "bg-white/5 text-white/40 border-white/10 hover:text-white"
+                : "bg-white/5 text-white/50 border-white/10 hover:text-white"
             )}
             title="Toggle GPS & Navigation"
           >
-            <MapIcon size={12} className="shrink-0" />
-            <span className="hidden sm:inline">{navigation.isActive ? 'GPS ON' : 'GPS TRACKING'}</span>
-            <span className="sm:hidden">{navigation.isActive ? 'ON' : 'GPS'}</span>
+            <MapIcon size={11} className="shrink-0" />
+            <span>{navigation.isActive ? 'GPS ON' : 'GPS'}</span>
           </button>
           
           {isRecording ? (
             <button 
               onClick={stopTrip}
-              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full bg-car-danger/20 text-car-danger border border-car-danger/30 text-[10px] sm:text-xs font-medium animate-pulse shrink-0"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-car-danger/20 text-car-danger border border-car-danger/30 text-[10px] font-medium animate-pulse shrink-0 cursor-pointer"
             >
-              <Square size={12} fill="currentColor" className="shrink-0" />
-              <span className="hidden sm:inline">RECORDING</span>
-              <span className="sm:hidden">REC</span>
+              <Square size={10} fill="currentColor" className="shrink-0" />
+              <span>REC</span>
             </button>
           ) : (
             <button 
               onClick={startTrip}
-              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-full bg-car-accent/20 text-car-accent border border-car-accent/30 text-[10px] sm:text-xs font-medium shrink-0"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-car-accent/20 text-car-accent border border-car-accent/30 text-[10px] font-medium shrink-0 cursor-pointer"
             >
-              <Play size={12} fill="currentColor" className="shrink-0" />
-              <span className="hidden sm:inline">START TRIP</span>
-              <span className="sm:hidden">START</span>
+              <Play size={10} fill="currentColor" className="shrink-0" />
+              <span>START</span>
             </button>
           )}
         </div>
@@ -1226,7 +1535,7 @@ export default function App() {
       )}
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto pb-24">
+      <main className="flex-1 overflow-y-auto pb-40">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -1252,6 +1561,15 @@ export default function App() {
                 onLinkDrive={linkGoogleDrive}
                 totalMileage={totalMileage}
                 vehicleModel={vehicleModel}
+                onOpen3DStudio={() => setActiveTab('scene3d')}
+              />
+            )}
+            {activeTab === 'scene3d' && (
+              <VehicleScene3D
+                obdData={obdData}
+                speed={obdData.speed}
+                rpm={obdData.rpm}
+                vehicleModel={vehicleModel}
               />
             )}
             {activeTab === 'damage' && (
@@ -1260,6 +1578,7 @@ export default function App() {
                 history={damageHistory} 
                 sensorHistory={sensorHistory}
                 trips={trips} 
+                currentTrip={currentTrip}
                 isRecording={isRecording}
                 mapsApiKey={apiKeys.maps}
                 isLoaded={isLoaded}
@@ -1267,6 +1586,8 @@ export default function App() {
                 onUpdateTrip={(updatedTrip) => {
                   setTrips(prev => prev.map(t => t.id === updatedTrip.id ? updatedTrip : t));
                 }}
+                onLogDamagePoint={(sev, label) => logManualOrSensorDamagePoint(sev, label)}
+                onRequestSensorPermission={requestMotionPermission}
                 googleAccessToken={googleAccessToken}
                 onLinkDrive={linkGoogleDrive}
               />
@@ -1281,6 +1602,8 @@ export default function App() {
                 isLoaded={isLoaded}
                 loadError={mapsLoadError}
                 onShowTripSummary={(trip) => setCompletedTripForSummary(trip)}
+                speed={Math.round(obdData.speed * 0.621371)}
+                rpm={obdData.rpm}
               />
             )}
             {activeTab === 'maintenance' && (
@@ -1310,31 +1633,106 @@ export default function App() {
         mapsApiKey={apiKeys.maps} 
         isLoaded={isLoaded}
         loadError={mapsLoadError}
+        speed={Math.round(obdData.speed * 0.621371)}
+        rpm={obdData.rpm}
       />
 
       {isChatbotOpen && (
         <AIChatbot
           isOpen={isChatbotOpen}
           onClose={() => setIsChatbotOpen(false)}
-          userId={user?.uid}
+          userId={user && !(user as any).isDemo ? user.uid : undefined}
         />
       )}
 
       <LiveChatAssistant 
         ref={chatAssistantRef}
-        speed={obdData.speed}
+        speed={Math.round(obdData.speed * 0.621371)}
         rpm={obdData.rpm}
         isRecording={isRecording}
         onTabChange={(tab: any) => setActiveTab(tab)}
         onSetNavigation={(from: any, to: any) => setNavigation({ from, to, isActive: true })}
         onDiagnose={handleAIDiagnosis}
-        onToggleRecording={(start: any) => setIsRecording(start)}
+        onToggleRecording={(start: any) => start ? startTrip() : stopTrip()}
+        onConnectOBD={connectToOBD}
+        onConnectSerial={connectToSerialOBD}
+        onLogDamagePoint={(sev, label) => logManualOrSensorDamagePoint(sev.toLowerCase() as 'minor' | 'moderate' | 'severe', label)}
+        onExecuteVoiceCommand={(name, args) => {
+          if (name === 'setNavigation') {
+            if (args?.clear) {
+              setNavigation({ from: '', to: '', isActive: false });
+              return 'Cleared active GPS navigation route';
+            }
+            if (args?.gpsActive !== undefined) {
+              setNavigation(prev => ({ ...prev, isActive: Boolean(args.gpsActive), from: prev.from || 'Current Location' }));
+              return `GPS tracking ${args.gpsActive ? 'enabled' : 'disabled'}`;
+            }
+          } else if (name === 'manageMaintenance') {
+            setActiveTab('maintenance');
+            if (args?.action === 'completeTask' && args?.taskName) {
+              const target = String(args.taskName).toLowerCase();
+              setMaintenanceTasks(prev => prev.map(t =>
+                t.name.toLowerCase().includes(target)
+                  ? { ...t, lastCompletedMiles: totalMileage, lastCompletedDate: Date.now() }
+                  : t
+              ));
+              return `Marked "${args.taskName}" maintenance task complete`;
+            } else if (args?.action === 'addTask' && args?.taskName) {
+              setMaintenanceTasks(prev => [
+                ...prev,
+                {
+                  id: Math.random().toString(36).substr(2, 9),
+                  name: String(args.taskName),
+                  type: 'custom',
+                  intervalMiles: Number(args.intervalMiles) || 5000,
+                  intervalMonths: 6,
+                  lastCompletedMiles: totalMileage,
+                  lastCompletedDate: Date.now()
+                }
+              ]);
+              return `Added new maintenance task: ${args.taskName}`;
+            }
+          } else if (name === 'controlSettings') {
+            if (args?.action === 'open') {
+              setShowSettings(true);
+              return 'Opened Settings Modal';
+            } else if (args?.action === 'close') {
+              setShowSettings(false);
+              return 'Closed Settings Modal';
+            } else if (args?.action === 'setVehicleModel' && args?.vehicleModel) {
+              setVehicleModel(args.vehicleModel);
+              localStorage.setItem('ztcd_vehicle_model', args.vehicleModel);
+              return `Set active vehicle to ${args.vehicleModel}`;
+            } else if (args?.action === 'backupDrive') {
+              backupAllData();
+              return 'Backing up all DriveLogic data to Google Drive';
+            } else if (args?.action === 'linkDrive') {
+              linkGoogleDrive();
+              return 'Initiated Google Drive Cloud Sync';
+            } else if (args?.action === 'refreshBackups') {
+              loadDriveBackups();
+              return 'Refreshing Google Drive backups';
+            } else if (args?.action === 'signOut') {
+              if (user && (user as any).isDemo) setUser(null);
+              else signOut(auth);
+              return 'Signed out of DriveLogic';
+            }
+          } else if (name === 'controlAssistant' && args?.action === 'openChat') {
+            setIsChatbotOpen(true);
+            return 'Opened DriveLogic Search-Grounded Chat';
+          }
+        }}
         postCommandActions={postCommandActions}
         isSimulation={isSimulation}
         onSetSimulation={setIsSimulation}
+        trips={trips}
+        vehicleModel={vehicleModel}
+        user={user}
+        obdData={obdData}
+        navigation={navigation}
       />
 
-      {/* Settings Modal */}
+      {/* Settings Modal with Visible Custom Scrollbar */}
       <AnimatePresence>
         {showSettings && (
           <motion.div 
@@ -1347,24 +1745,29 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="w-full max-w-md glass-card p-6 rounded-3xl space-y-6 max-h-[85vh] overflow-y-auto"
+              className="w-full max-w-md glass-card p-5 sm:p-6 rounded-3xl flex flex-col max-h-[86vh] border border-white/15 shadow-2xl"
             >
-              <div className="flex justify-between items-center">
+              {/* Pinned Modal Header */}
+              <div className="flex justify-between items-center pb-4 border-b border-white/10 shrink-0">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-car-accent/10 rounded-xl">
+                  <div className="p-2 bg-car-accent/15 rounded-xl border border-car-accent/30">
                     <Settings className="text-car-accent" size={20} />
                   </div>
-                  <h2 className="text-xl font-bold">Settings</h2>
+                  <div>
+                    <h2 className="text-lg font-bold text-white leading-tight">DriveLogic Settings</h2>
+                    <p className="text-[10px] font-mono text-white/40">Scroll down for Cloud Sync & Voice Controls</p>
+                  </div>
                 </div>
                 <button 
                   onClick={() => setShowSettings(false)}
-                  className="p-2 rounded-full hover:bg-white/5 text-white/40"
+                  className="p-2 rounded-full hover:bg-white/10 text-white/60 hover:text-white transition-colors cursor-pointer"
                 >
                   <X size={20} />
                 </button>
               </div>
 
-              <div className="space-y-4">
+              {/* Scrollable Settings Body with Visible Scrollbar */}
+              <div className="flex-1 overflow-y-scroll settings-scrollbar pr-2.5 py-4 space-y-5 max-h-[58vh]">
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
                     <label className="text-[10px] uppercase tracking-widest text-white/40 font-mono flex items-center gap-2">
@@ -1418,7 +1821,7 @@ export default function App() {
                     placeholder="e.g., 2023 Toyota Camry"
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-car-accent transition-colors text-white"
                   />
-                  <p className="text-[8px] text-white/20">Used for AI diagnostics context</p>
+                  <p className="text-[8px] text-white/20">Used for DriveLogic AI diagnostics & web search context</p>
                 </div>
 
                 {/* Google Drive Backup Panel */}
@@ -1440,6 +1843,24 @@ export default function App() {
                     )}
                   </div>
 
+                  {backupStatusMsg && (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] text-car-accent font-mono bg-car-accent/10 py-1.5 px-2.5 rounded-lg border border-car-accent/20">
+                        {backupStatusMsg}
+                      </p>
+                      {isInIframe && backupStatusMsg.includes('New Tab') && (
+                        <a
+                          href={window.location.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block w-full py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/15 text-white text-[9px] font-mono font-bold uppercase tracking-wider text-center transition-colors"
+                        >
+                          Open App in New Tab ↗
+                        </a>
+                      )}
+                    </div>
+                  )}
+
                   {!googleAccessToken ? (
                     <div className="space-y-2">
                       <p className="text-[10px] text-white/40 leading-relaxed">
@@ -1447,10 +1868,11 @@ export default function App() {
                       </p>
                       <button
                         onClick={linkGoogleDrive}
-                        className="w-full py-2 px-3 bg-gradient-to-r from-car-accent to-car-accent/80 hover:brightness-110 active:scale-[0.98] text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2"
+                        disabled={isLinkingDrive}
+                        className="w-full py-2 px-3 bg-gradient-to-r from-car-accent to-car-accent/80 hover:brightness-110 disabled:opacity-50 active:scale-[0.98] text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
                       >
-                        <FolderSync size={14} />
-                        LINK GOOGLE DRIVE
+                        <FolderSync size={14} className={isLinkingDrive ? "animate-spin" : ""} />
+                        {isLinkingDrive ? 'CONNECTING GOOGLE DRIVE...' : 'LINK GOOGLE DRIVE'}
                       </button>
                     </div>
                   ) : (
@@ -1458,7 +1880,8 @@ export default function App() {
                       <div className="flex gap-2">
                         <button
                           onClick={backupAllData}
-                          className="flex-1 py-2 px-3 bg-white/5 border border-white/10 hover:bg-white/10 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5"
+                          disabled={isLinkingDrive}
+                          className="flex-1 py-2 px-3 bg-white/5 border border-white/10 hover:bg-white/10 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                         >
                           <CloudUpload size={14} className="text-car-accent" />
                           Backup All Data
@@ -1466,16 +1889,12 @@ export default function App() {
                         <button
                           onClick={() => loadDriveBackups()}
                           disabled={isLoadingBackups}
-                          className="py-2 px-3 bg-white/5 border border-white/10 hover:bg-white/10 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center"
+                          className="py-2 px-3 bg-white/5 border border-white/10 hover:bg-white/10 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center cursor-pointer"
                           title="Refresh backup list"
                         >
                           <RotateCw size={14} className={isLoadingBackups ? "animate-spin text-car-cyan" : "text-car-cyan"} />
                         </button>
                       </div>
-
-                      {backupStatusMsg && (
-                        <p className="text-[10px] text-car-accent font-mono bg-car-accent/5 py-1 px-2.5 rounded-lg border border-car-accent/10">{backupStatusMsg}</p>
-                      )}
 
                       <div className="space-y-1.5">
                         <span className="text-[9px] uppercase tracking-wider text-white/40 font-mono">Available Cloud Backups</span>
@@ -1487,7 +1906,7 @@ export default function App() {
                             No DriveLogic backups found on Google Drive.
                           </div>
                         ) : (
-                          <div className="space-y-1 max-h-[140px] overflow-y-auto pr-1 custom-scrollbar">
+                          <div className="space-y-1 max-h-[140px] overflow-y-auto pr-1 settings-scrollbar">
                             {driveBackups.map((file) => (
                               <div key={file.id} className="flex items-center justify-between bg-black/30 p-2 rounded-lg border border-white/5 hover:border-white/10 transition-colors">
                                 <div className="flex-1 min-w-0 pr-2">
@@ -1523,28 +1942,30 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Voice Commands List */}
+                {/* Hands-Free Voice Commands Reference */}
                 <div className="space-y-3 bg-white/5 p-4 rounded-xl border border-white/10">
-                  <h3 className="text-[10px] uppercase tracking-widest font-mono text-white/60 flex items-center gap-1.5">
-                    <Mic size={12} className="text-car-accent" />
-                    Voice Commands Reference
+                  <h3 className="text-[10px] uppercase tracking-widest font-mono text-emerald-400 flex items-center gap-1.5">
+                    <Mic size={12} className="text-emerald-400" />
+                    DriveLogic (Eclipse Voice) Commands
                   </h3>
-                  <div className="space-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                    <p className="text-[10px] text-white/40 mb-2">Say "Hey Drive Logic" followed by:</p>
-                    <ul className="text-[10px] text-white/80 space-y-1 font-mono list-disc pl-4">
-                      <li>"Navigate to [Destination]"</li>
-                      <li>"Add stop [Waypoint]"</li>
-                      <li>"What's wrong with my car?"</li>
-                      <li>"Diagnose engine"</li>
-                      <li>"Recommend a route"</li>
-                      <li>"Report speed trap"</li>
-                      <li>"Clear navigation"</li>
+                  <div className="space-y-2 max-h-44 overflow-y-auto pr-2 settings-scrollbar">
+                    <p className="text-[10px] text-white/50 mb-2">Say <strong className="text-emerald-300">"Hey, DriveLogic"</strong> to control any button or ask anything:</p>
+                    <ul className="text-[10px] text-white/80 space-y-1.5 font-mono list-disc pl-4">
+                      <li>"Switch to OBD / 3D Studio / Damage / GPS / Maintenance / Pro tab"</li>
+                      <li>"Connect ELM327 Bluetooth" or "Connect USB OBD"</li>
+                      <li>"Diagnose my vehicle" or "Look up code P0420"</li>
+                      <li>"Start trip recording" / "Stop recording"</li>
+                      <li>"Log a severe pothole" / "Enable simulation mode"</li>
+                      <li>"Navigate to [Destination]" / "Optimize low-damage route"</li>
+                      <li>"Scan 911 and Crime Radar ahead" / "What's ahead on my route?"</li>
+                      <li>"Open 3D X-Ray mode" / "Show engine bay in 3D"</li>
+                      <li>"Mark oil change complete" / "Backup data to Google Drive"</li>
                     </ul>
                   </div>
                 </div>
 
                 <div className="space-y-3 bg-white/5 p-4 rounded-xl border border-white/10">
-                  <h3 className="text-[10px] uppercase tracking-widest font-mono text-white/60">Voice Command Actions</h3>
+                  <h3 className="text-[10px] uppercase tracking-widest font-mono text-white/60">Voice Command Automations</h3>
                   
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     <div className="space-y-1">
@@ -1600,20 +2021,10 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-                
-                <div className="space-y-2 bg-white/5 p-4 rounded-xl border border-white/10">
-                  <h3 className="text-[10px] uppercase tracking-widest font-mono text-white/60 mb-2">Base Voice Commands</h3>
-                  <ul className="text-[10px] space-y-1.5 text-white/40 list-disc list-inside">
-                    <li><strong className="text-white/80">"Hey Drive logic"</strong> - Start listening manually</li>
-                    <li><strong className="text-white/80">"Show me my maintenance tasks"</strong> - Switch tabs</li>
-                    <li><strong className="text-white/80">"Diagnose my vehicle"</strong> - Run AI diagnostics</li>
-                    <li><strong className="text-white/80">"Start recording"</strong> / <strong className="text-white/80">"Stop recording"</strong> - Trip logging</li>
-                    <li><strong className="text-white/80">"Navigate from [A] to [B]"</strong> - Set GPS route</li>
-                  </ul>
-                </div>
               </div>
 
-              <div className="flex flex-col gap-2">
+              {/* Pinned Modal Footer */}
+              <div className="flex flex-col gap-2 pt-3 border-t border-white/10 shrink-0">
                 <div className="flex gap-2">
                   <button 
                     onClick={() => {
@@ -1621,13 +2032,13 @@ export default function App() {
                       localStorage.removeItem('ztcd_gemini_api_key');
                       window.location.reload();
                     }}
-                    className="w-1/3 py-3 bg-white/5 border border-white/10 text-white/60 rounded-xl font-bold text-[10px] uppercase hover:bg-white/10 hover:text-white transition-all"
+                    className="w-1/3 py-2.5 bg-white/5 border border-white/10 text-white/60 rounded-xl font-bold text-[10px] uppercase hover:bg-white/10 hover:text-white transition-all cursor-pointer"
                   >
                     Reset Keys
                   </button>
                   <button 
                     onClick={saveApiKeys}
-                    className="w-2/3 py-3 bg-car-accent text-white rounded-xl font-bold text-sm hover:bg-car-accent/80 transition-all"
+                    className="w-2/3 py-2.5 bg-car-accent text-white rounded-xl font-bold text-xs sm:text-sm hover:bg-car-accent/80 transition-all cursor-pointer"
                   >
                     SAVE CONFIGURATION
                   </button>
@@ -1640,7 +2051,7 @@ export default function App() {
                       signOut(auth);
                     }
                   }}
-                  className="w-full py-3 mt-4 bg-car-danger/20 border border-car-danger/30 text-car-danger rounded-xl font-bold text-sm hover:bg-car-danger/30 transition-all"
+                  className="w-full py-2.5 bg-car-danger/20 border border-car-danger/30 text-car-danger rounded-xl font-bold text-xs hover:bg-car-danger/30 transition-all cursor-pointer"
                 >
                   SIGN OUT
                 </button>
@@ -1675,8 +2086,8 @@ export default function App() {
                 isActive ? "text-car-accent bg-car-accent/5" : "text-white/40 hover:text-white/60"
               )}
             >
-              <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />
-              <span className="text-[10px] font-medium uppercase tracking-wider">{tab.id}</span>
+              <Icon size={18} strokeWidth={isActive ? 2.5 : 2} />
+              <span className="text-[9px] font-medium uppercase tracking-tight text-center truncate w-full">{tab.label}</span>
               {isActive && (
                 <motion.div 
                   layoutId="activeTab"

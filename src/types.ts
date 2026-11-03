@@ -27,6 +27,9 @@ export interface OBDData {
     oxygenSensor: boolean;
   };
   timestamp: number;
+  detectedProtocol?: string;
+  deviceName?: string;
+  protocolStatus?: 'idle' | 'scanning' | 'auto_sensing' | 'locked';
 }
 
 export interface TripEvent {
@@ -54,13 +57,26 @@ export interface Trip {
 }
 
 export interface DamagePoint {
+  id?: string;
   score: number;
   timestamp: number;
+  gForce?: number;
+  vibrationRms?: number;
+  lat?: number;
+  lng?: number;
+  speed?: number;
+  severity?: 'minor' | 'moderate' | 'severe';
+  label?: string;
+  axis?: { x: number; y: number; z: number };
 }
 
 export interface SensorPoint {
   accel: number;
   gyro: number;
+  vibrationRms?: number;
+  x?: number;
+  y?: number;
+  z?: number;
   timestamp: number;
 }
 
@@ -95,7 +111,24 @@ export interface SubscriptionPlan {
   recommended?: boolean;
 }
 
-export type RoadHazardType = 'speed_trap' | 'accident' | 'roadwork' | 'emergency_vehicle' | 'weather_hazard' | 'traffic_jam';
+export type RoadHazardType =
+  | 'speed_trap'
+  | 'accident'
+  | 'roadwork'
+  | 'emergency_vehicle'
+  | 'weather_hazard'
+  | 'traffic_jam'
+  | 'dispatch_911'
+  | 'crime_radar'
+  | 'prior_trip_damage';
+
+export interface ScrapedFeedStatus {
+  source: string;
+  category: '911_cad' | 'crime_radar' | 'waze' | 'dot_511' | 'weather' | 'prior_trips' | 'prior_chats';
+  status: 'live' | 'synced';
+  incidentsCount: number;
+  lastScraped: string;
+}
 
 export interface RoadHazard {
   id: string;
@@ -105,15 +138,18 @@ export interface RoadHazard {
   coordinates: { lat: number; lng: number };
   severity: 'low' | 'moderate' | 'high' | 'critical';
   description: string;
-  source: string; // e.g. "Waze Community", "511NY Incident Feed", "NY State Police"
-  timestamp: string; // e.g. "8 min ago" or "Live"
+  source: string; // e.g. "Crime Radar App", "911 CAD Dispatch", "Waze Community", "511NY", "Prior Trip Vibration Log"
+  timestamp: string; // e.g. "2 min ago" or "Live"
   reportedDelayMinutes?: number;
   direction?: 'NB' | 'SB' | 'EB' | 'WB' | 'Both';
   verifiedCount?: number;
+  callCode?: string; // e.g. "911-CAD #4812 / 10-50", "CRIME-RADAR ALERT"
 }
 
 export interface TrafficHazardsResponse {
   summary: string;
+  verbalAlert?: string;
+  audio?: string | null;
   location: string;
   hazards: RoadHazard[];
   weather?: {
@@ -124,6 +160,7 @@ export interface TrafficHazardsResponse {
     windSpeed: string;
     hazards?: string[];
   };
+  scrapedFeeds?: ScrapedFeedStatus[];
   sources: { title: string; uri: string }[];
   lastUpdated: number;
 }

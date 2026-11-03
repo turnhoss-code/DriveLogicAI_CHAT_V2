@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Map as MapIcon, MapPin, Navigation, BrainCircuit, AlertCircle, Info, ArrowRight, Key, Search, AlertTriangle, Mic, FileSpreadsheet, FileCode, Radio, ShieldAlert } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Map as MapIcon, MapPin, Navigation, BrainCircuit, Info, ArrowRight, Key, Search, AlertTriangle, Mic, ShieldAlert, Maximize2, Minimize2, CloudRain, Gauge } from 'lucide-react';
 import { Trip, NavigationState, RoadHazard, TrafficHazardsResponse } from '../types';
 import { getRouteRecommendation } from '../services/geminiService';
-import { fetchLiveTrafficHazards } from '../services/hazardService';
+import { fetchLiveTrafficHazards, anchorHazardsToRoute, getHazardMarkerConfig } from '../services/hazardService';
 import { LiveHazardRadar } from './LiveHazardRadar';
 import { motion } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
@@ -12,6 +12,7 @@ import { cn } from '../lib/utils';
 import TripTimelineDetails from './TripTimelineDetails';
 import { TripSummaryCard } from './TripSummaryCard';
 import { exportTripAsJSON, exportTripAsCSV } from '../lib/tripExporter';
+import { formatPriorTripsSummary, formatHarshEventsSummary } from '../lib/chatMemory';
 
 let persistentMicStream: MediaStream | null = null;
 
@@ -26,6 +27,8 @@ interface GPSTabProps {
   authError?: string | null;
   onOpenSettings?: () => void;
   onShowTripSummary?: (trip: Trip) => void;
+  speed?: number;
+  rpm?: number;
 }
 
 const mapContainerStyle = {
@@ -122,7 +125,7 @@ const MOCK_SPEED_TRAPS = [
 ];
 
 
-export default function GPSTab({ isRecording, trips, navigation, setNavigation, mapsApiKey, isLoaded, loadError, authError, onOpenSettings, onShowTripSummary }: GPSTabProps) {
+export default function GPSTab({ isRecording, trips, navigation, setNavigation, mapsApiKey, isLoaded, loadError, authError, onOpenSettings, onShowTripSummary, speed = 0, rpm = 0 }: GPSTabProps) {
   const [recommendation, setRecommendation] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -142,9 +145,18 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
   const [hazardData, setHazardData] = useState<TrafficHazardsResponse | null>(null);
   const [isLoadingHazards, setIsLoadingHazards] = useState(false);
   const [showHazardRadar, setShowHazardRadar] = useState(true);
+  const [isMapExpanded, setIsMapExpanded] = useState(true);
   const [activeHazardInfo, setActiveHazardInfo] = useState<RoadHazard | null>(null);
   const recognitionRef = useRef<any>(null);
   const awakeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const inRouteHazards = useMemo(() => {
+    return anchorHazardsToRoute(
+      hazardData?.hazards || [],
+      calculatedRoute?.path,
+      location || DEFAULT_NY_LOCATION
+    );
+  }, [hazardData?.hazards, calculatedRoute?.path, location]);
 
   const loadHazards = useCallback(async (loc?: string) => {
     setIsLoadingHazards(true);
@@ -154,6 +166,10 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
         location: targetLoc,
         lat: location?.lat || DEFAULT_NY_LOCATION.lat,
         lng: location?.lng || DEFAULT_NY_LOCATION.lng,
+        priorTripsSummary: formatPriorTripsSummary(trips || []),
+        harshEventsSummary: formatHarshEventsSummary(trips || []),
+        telemetry: { speed, rpm },
+        forceRefresh: Boolean(loc),
       });
       setHazardData(res);
     } catch (e) {
@@ -161,10 +177,23 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
     } finally {
       setIsLoadingHazards(false);
     }
-  }, [navigation.to, navigation.from, location]);
+  }, [navigation.to, navigation.from, location, trips, speed, rpm]);
 
   useEffect(() => {
     loadHazards();
+  }, [loadHazards]);
+
+  useEffect(() => {
+    const onVoiceCommand = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail) return;
+      if (detail.name === 'showHazards' || detail.name === 'scanUpcomingProblems') {
+        setShowHazardRadar(true);
+        loadHazards(detail.args?.location);
+      }
+    };
+    window.addEventListener('drivelogic:command', onVoiceCommand);
+    return () => window.removeEventListener('drivelogic:command', onVoiceCommand);
   }, [loadHazards]);
 
   const handleSelectHazard = (hazard: RoadHazard) => {
@@ -531,7 +560,10 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
       )}
 
       {/* Map View */}
-      <div className="relative h-96 rounded-3xl overflow-hidden glass-card border-white/5 flex flex-col scanline-overlay">
+      <div className={cn(
+        "relative rounded-3xl overflow-hidden glass-card border-white/5 flex flex-col scanline-overlay transition-all duration-300",
+        isMapExpanded ? "h-[480px]" : "h-80"
+      )}>
         {(authError || loadError) && (
           <div className="absolute top-4 left-4 right-4 z-30 bg-car-danger/90 backdrop-blur-md border border-car-danger/50 p-2.5 rounded-xl text-white flex items-center justify-between shadow-xl">
             <div className="flex items-center gap-2">
@@ -555,18 +587,18 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
         {isLoaded && mapsApiKey ? (
           <>
             {/* Search Bar Overlay */}
-            <div className="absolute top-4 left-4 right-16 z-10">
+            <div className="absolute top-3 left-3 right-16 z-10 space-y-1.5">
               <form
                 onSubmit={handleManualSearch}
                 className="relative flex items-center"
               >
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" size={16} />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" size={15} />
                 <input
                   type="text"
                   placeholder="Search destination (press Enter)..."
                   value={searchValue}
                   onChange={(e) => setSearchValue(e.target.value)}
-                  className="w-full bg-black/60 backdrop-blur-md border border-white/10 rounded-xl py-3 pl-10 pr-12 text-sm text-white placeholder:text-white/40 focus:outline-none focus:border-car-accent/50 shadow-lg"
+                  className="w-full bg-black/70 backdrop-blur-md border border-white/10 rounded-xl py-2.5 pl-9 pr-10 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-car-accent/50 shadow-lg"
                 />
                 <button
                   type="button"
@@ -575,20 +607,39 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
                     toggleWakeWord();
                   }}
                   className={cn(
-                    "absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-colors",
+                    "absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-colors",
                     isWakeWordActive ? "bg-car-accent/20 text-car-accent animate-pulse" : "text-white/40 hover:text-white hover:bg-white/10"
                   )}
                   title="Voice Search"
                 >
-                  <Mic size={16} />
+                  <Mic size={14} />
                 </button>
               </form>
+
+              {/* Discreet Expanded HUD Strip: Speed/RPM + Route Weather + Waze In-Route Icons */}
+              {isMapExpanded && (
+                <div className="flex flex-wrap items-center gap-1.5 pointer-events-none">
+                  <div className="px-2.5 py-1 rounded-lg bg-black/75 backdrop-blur-md border border-white/10 flex items-center gap-1.5 text-[9.5px] font-mono text-white shadow">
+                    <Gauge size={11} className="text-car-success shrink-0" />
+                    <span className="font-bold text-car-success">{speed} MPH</span>
+                    <span className="text-white/30">•</span>
+                    <span className="font-bold text-car-purple">{rpm} RPM</span>
+                  </div>
+                  {hazardData?.weather && (
+                    <div className="px-2.5 py-1 rounded-lg bg-black/75 backdrop-blur-md border border-white/10 flex items-center gap-1.5 text-[9.5px] font-mono text-sky-300 shadow">
+                      <CloudRain size={11} className="text-sky-400 shrink-0" />
+                      <span className="font-bold">{hazardData.weather.tempF}°F</span>
+                      <span className="text-white/70 truncate max-w-[140px]">{hazardData.weather.condition}</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <GoogleMap
               mapContainerStyle={mapContainerStyle}
               center={location || DEFAULT_NY_LOCATION}
-              zoom={15}
+              zoom={14}
               onLoad={onLoad}
               onUnmount={onUnmount}
               onDragStart={() => setFollowUser(false)}
@@ -596,7 +647,7 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
               options={{
                 styles: darkMapStyles,
                 disableDefaultUI: true,
-                zoomControl: true,
+                zoomControl: false,
                 clickableIcons: false,
               }}
             >
@@ -644,25 +695,9 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
                 />
               )}
 
-              {/* Live Crowdsourced Road Hazards, Speed Traps & Accidents */}
-              {showHazardRadar && hazardData?.hazards?.map((hazard) => {
-                const getMarkerConfig = (type: string) => {
-                  switch (type) {
-                    case 'speed_trap':
-                      return { color: '#F59E0B', label: '👮', title: 'Speed Trap' };
-                    case 'accident':
-                      return { color: '#EF4444', label: '💥', title: 'Accident' };
-                    case 'roadwork':
-                      return { color: '#F97316', label: '🚧', title: 'Roadwork' };
-                    case 'emergency_vehicle':
-                      return { color: '#06B6D4', label: '🚑', title: 'Emergency Vehicle' };
-                    case 'weather_hazard':
-                      return { color: '#3B82F6', label: '🌧️', title: 'Weather Hazard' };
-                    default:
-                      return { color: '#A855F7', label: '⚠️', title: 'Hazard' };
-                  }
-                };
-                const config = getMarkerConfig(hazard.type);
+              {/* Auto-Populated Waze & Web In-Route Hazards (Speed Traps, Road Work, Emergency Sites, Weather) */}
+              {showHazardRadar && inRouteHazards.map((hazard) => {
+                const config = getHazardMarkerConfig(hazard.type);
                 return (
                   <Marker
                     key={hazard.id}
@@ -672,7 +707,7 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
                       path: (window.google?.maps?.SymbolPath?.CIRCLE ?? 0),
                       scale: 12,
                       fillColor: config.color,
-                      fillOpacity: 0.9,
+                      fillOpacity: 0.92,
                       strokeWeight: 2,
                       strokeColor: "#FFFFFF",
                     }}
@@ -680,7 +715,7 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
                       text: config.label,
                       fontSize: "12px",
                     }}
-                    title={`${hazard.title}: ${hazard.location}`}
+                    title={`${config.badge}: ${hazard.title} (${hazard.location})`}
                   />
                 );
               })}
@@ -750,48 +785,60 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
             </GoogleMap>
             
             {/* Map Controls */}
-            <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
+            <div className="absolute top-3 right-3 flex flex-col gap-1.5 z-10">
+              <button
+                onClick={() => setIsMapExpanded(!isMapExpanded)}
+                className={cn(
+                  "p-2.5 rounded-xl transition-all border shadow-lg cursor-pointer",
+                  isMapExpanded
+                    ? "bg-car-accent/90 text-white border-car-accent"
+                    : "bg-black/60 text-white/70 border-white/10 hover:bg-black/80"
+                )}
+                title={isMapExpanded ? "Compact Map View" : "Expand Map & Waze/Weather HUD"}
+              >
+                {isMapExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </button>
               <button
                 onClick={() => {
                   setFollowUser(true);
                   if (location && map) map.panTo(location);
                 }}
                 className={cn(
-                  "p-3 rounded-xl transition-all border shadow-lg",
+                  "p-2.5 rounded-xl transition-all border shadow-lg cursor-pointer",
                   followUser 
                     ? "bg-car-accent text-white border-car-accent shadow-[0_0_15px_rgba(242,125,38,0.3)]" 
                     : "bg-black/60 text-white/60 border-white/10 hover:bg-black/80"
                 )}
                 title="Follow My Location"
               >
-                <Navigation size={18} className={cn(followUser && "animate-pulse")} />
+                <Navigation size={16} className={cn(followUser && "animate-pulse")} />
               </button>
               <button
                 onClick={() => setShowTraffic(!showTraffic)}
                 className={cn(
-                  "p-3 rounded-xl transition-all border shadow-lg",
+                  "p-2.5 rounded-xl transition-all border shadow-lg cursor-pointer",
                   showTraffic 
                     ? "bg-car-accent text-white border-car-accent shadow-[0_0_15px_rgba(242,125,38,0.3)]" 
                     : "bg-black/60 text-white/60 border-white/10 hover:bg-black/80"
                 )}
                 title="Toggle Traffic Layer"
               >
-                <MapIcon size={18} />
+                <MapIcon size={16} />
               </button>
               <button
                 onClick={() => setShowHazardRadar(!showHazardRadar)}
                 className={cn(
-                  "p-3 rounded-xl transition-all border shadow-lg relative cursor-pointer",
+                  "p-2.5 rounded-xl transition-all border shadow-lg relative cursor-pointer",
                   showHazardRadar 
                     ? "bg-amber-500 text-black border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]" 
                     : "bg-black/60 text-white/60 border-white/10 hover:bg-black/80"
                 )}
-                title="Toggle Live Road Hazard & Speed Trap Radar"
+                title="Toggle Live Waze & Web Road Hazard Icons"
               >
-                <ShieldAlert size={18} />
-                {hazardData && hazardData.hazards.length > 0 && (
+                <ShieldAlert size={16} />
+                {inRouteHazards.length > 0 && (
                   <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center font-mono">
-                    {hazardData.hazards.length}
+                    {inRouteHazards.length}
                   </span>
                 )}
               </button>
@@ -799,23 +846,18 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
 
             {/* Route Summary Banner if Active */}
             {calculatedRoute && (
-              <div className="absolute bottom-14 left-4 right-4 z-10 flex items-center justify-between bg-black/80 backdrop-blur-md border border-white/10 px-3.5 py-2 rounded-xl shadow-xl">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-7 h-7 rounded-lg bg-car-accent/20 flex items-center justify-center text-car-accent shrink-0">
-                    <Navigation size={14} />
+              <div className="absolute bottom-12 left-3 right-3 z-10 flex items-center justify-between bg-black/80 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-xl shadow-xl">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-6 h-6 rounded-lg bg-car-accent/20 flex items-center justify-center text-car-accent shrink-0">
+                    <Navigation size={13} />
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-white tracking-wide">{calculatedRoute.durationText}</span>
                       <span className="text-[10px] text-white/40">•</span>
                       <span className="text-xs font-mono text-white/70">{calculatedRoute.distanceText}</span>
-                      {calculatedRoute.isSimulated && (
-                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold uppercase">
-                          Simulated
-                        </span>
-                      )}
                     </div>
-                    <p className="text-[10px] text-white/40 truncate">{navigation.to}</p>
+                    <p className="text-[9.5px] text-white/45 truncate">{navigation.to}</p>
                   </div>
                 </div>
                 <button
@@ -824,24 +866,29 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
                     setNavigation({ ...navigation, to: '', isActive: false });
                     setCalculatedRoute(null);
                   }}
-                  className="text-[10px] font-mono font-bold uppercase px-2 py-1 bg-white/10 hover:bg-white/20 text-white/80 hover:text-white rounded-md transition-colors shrink-0 ml-2 cursor-pointer"
+                  className="text-[9.5px] font-mono font-bold uppercase px-2 py-1 bg-white/10 hover:bg-white/20 text-white/80 hover:text-white rounded-md transition-colors shrink-0 ml-2 cursor-pointer"
                 >
                   End
                 </button>
               </div>
             )}
 
-            {/* Live GPS Overlay */}
-            <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between pointer-events-none z-10">
-              <div className="bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-2 shadow-lg">
+            {/* Discreet Bottom In-Route 911/Crime Radar/Waze/Web Hazard Icon Summary & GPS Status */}
+            <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between pointer-events-none z-10">
+              <div className="bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-2 shadow-lg text-[9.5px] font-mono text-white/85 flex-wrap">
                 <div className="w-1.5 h-1.5 rounded-full bg-car-success animate-pulse" />
-                <span className="text-[10px] font-mono text-white/80 uppercase tracking-widest">Live GPS Active</span>
+                <span>🚨 {inRouteHazards.filter(h => h.type === 'dispatch_911' || h.type === 'crime_radar').length} 911/Crime</span>
+                <span>•</span>
+                <span>👮 {inRouteHazards.filter(h => h.type === 'speed_trap').length} Traps</span>
+                <span>•</span>
+                <span>🚧 {inRouteHazards.filter(h => h.type === 'roadwork').length} Work</span>
+                <span>•</span>
+                <span>📳 {inRouteHazards.filter(h => h.type === 'prior_trip_damage').length} Trip Log</span>
               </div>
               
               {accuracy && (
-                <div className="bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/10 shadow-lg">
-                  <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest mr-2">Acc:</span>
-                  <span className="text-[10px] font-mono text-car-success">±{accuracy.toFixed(1)}m</span>
+                <div className="bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 shadow-lg">
+                  <span className="text-[9.5px] font-mono text-car-success">±{accuracy.toFixed(0)}m</span>
                 </div>
               )}
             </div>

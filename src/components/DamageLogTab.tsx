@@ -1,12 +1,13 @@
-import React, { useState, useCallback } from 'react';
-import { Activity, History, AlertTriangle, ChevronRight, Clock, MapPin, ChevronDown, Download, Key, Check, FileSpreadsheet, FileCode } from 'lucide-react';
+import React, { useState } from 'react';
+import { Activity, History, AlertTriangle, ChevronRight, Clock, MapPin, ChevronDown, Download, Key, FileSpreadsheet, FileCode, Smartphone, Zap, PlusCircle, ShieldAlert } from 'lucide-react';
 import { DamagePoint, Trip, SensorPoint } from '../types';
-import { LineChart, Line, ResponsiveContainer, YAxis, XAxis, Tooltip, AreaChart, Area } from 'recharts';
+import { ResponsiveContainer, YAxis, XAxis, Tooltip, AreaChart, Area, ReferenceLine } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { GoogleMap, Polyline, Marker, InfoWindow } from '@react-google-maps/api';
 import TripTimelineDetails from './TripTimelineDetails';
 import { TripSummaryCard } from './TripSummaryCard';
+import TripDamageVibrationTrendChart from './TripDamageVibrationTrendChart';
 import { exportTripAsJSON, exportTripAsCSV } from '../lib/tripExporter';
 
 interface DamageLogTabProps {
@@ -14,6 +15,7 @@ interface DamageLogTabProps {
   history: DamagePoint[];
   sensorHistory: SensorPoint[];
   trips: Trip[];
+  currentTrip?: Partial<Trip> | null;
   isRecording: boolean;
   mapsApiKey: string;
   isLoaded: boolean;
@@ -21,6 +23,8 @@ interface DamageLogTabProps {
   authError?: string | null;
   onOpenSettings?: () => void;
   onUpdateTrip: (trip: Trip) => void;
+  onLogDamagePoint?: (severity?: 'minor' | 'moderate' | 'severe', label?: string) => void;
+  onRequestSensorPermission?: () => void;
   googleAccessToken?: string | null;
   onLinkDrive?: () => Promise<any> | void;
 }
@@ -52,12 +56,12 @@ const darkMapStyles = [
   { featureType: "water", elementType: "labels.text.stroke", stylers: [{ color: "#17263c" }] },
 ];
 
-
 export default function DamageLogTab({ 
   score, 
   history, 
   sensorHistory, 
   trips, 
+  currentTrip,
   isRecording, 
   mapsApiKey, 
   isLoaded, 
@@ -65,19 +69,48 @@ export default function DamageLogTab({
   authError, 
   onOpenSettings, 
   onUpdateTrip,
-  googleAccessToken,
-  onLinkDrive 
+  onLogDamagePoint,
+  onRequestSensorPermission,
 }: DamageLogTabProps) {
   const [expandedTripId, setExpandedTripId] = useState<string | null>(null);
-  const [selectedEvent, setSelectedEvent] = useState<{ type: string, timestamp: number, lat: number, lng: number } | null>(null);
-  const [newMarkerPos, setNewMarkerPos] = useState<{ lat: number, lng: number } | null>(null);
+  const [selectedPlotTripId, setSelectedPlotTripId] = useState<string>(() => trips[0]?.id || 'live');
+  const [selectedEvent, setSelectedEvent] = useState<{
+    type: string;
+    timestamp: number;
+    lat: number;
+    lng: number;
+    gForce?: number;
+    vibrationRms?: number;
+    speed?: number;
+    severity?: string;
+  } | null>(null);
+  const [newMarkerPos, setNewMarkerPos] = useState<{ lat: number; lng: number } | null>(null);
   const [markerNote, setMarkerNote] = useState('');
 
   React.useEffect(() => {
     setSelectedEvent(null);
     setNewMarkerPos(null);
     setMarkerNote('');
-  }, [expandedTripId]);
+  }, [expandedTripId, selectedPlotTripId]);
+
+  const activePlotTrip: Trip | null = React.useMemo(() => {
+    if (selectedPlotTripId === 'live' && isRecording && currentTrip) {
+      return {
+        id: currentTrip.id || 'live',
+        startTime: currentTrip.startTime || Date.now(),
+        waypoints: currentTrip.waypoints || [],
+        events: currentTrip.events || [],
+        damageHistory: currentTrip.damageHistory || history,
+        averageDamageScore: score,
+        distance: currentTrip.distance || 0,
+      };
+    }
+    return trips.find(t => t.id === selectedPlotTripId) || trips[0] || null;
+  }, [selectedPlotTripId, isRecording, currentTrip, trips, history, score]);
+
+  const latestSensor = sensorHistory.length > 0 ? sensorHistory[sensorHistory.length - 1] : null;
+  const currentAccelG = latestSensor ? latestSensor.accel : 0;
+  const currentVibrationRms = latestSensor?.vibrationRms ?? Math.max(0, Math.abs(currentAccelG - 0.15) * 0.45);
 
   const handleAddMarker = (trip: Trip) => {
     if (!newMarkerPos || !markerNote.trim()) return;
@@ -151,12 +184,14 @@ export default function DamageLogTab({
   };
 
   const renderRoute = (trip: Trip) => {
-    const { waypoints, events } = trip;
-    if (waypoints.length < 2) {
+    const { waypoints, events, damageHistory = [] } = trip;
+    const geoDamagePoints = damageHistory.filter(dp => typeof dp.lat === 'number' && typeof dp.lng === 'number');
+
+    if (waypoints.length < 2 && geoDamagePoints.length === 0) {
       return (
-        <div className="flex flex-col items-center justify-center h-full text-white/20">
-          <MapPin size={24} />
-          <span className="text-[8px] uppercase mt-1">No route data</span>
+        <div className="flex flex-col items-center justify-center h-full text-white/30 p-4 text-center">
+          <MapPin size={24} className="mb-1 text-car-accent/60" />
+          <span className="text-[10px] uppercase font-mono">Waiting for GPS route & accelerometer damage points...</span>
         </div>
       );
     }
@@ -198,15 +233,18 @@ export default function DamageLogTab({
       );
     }
 
-    const path = waypoints.map(w => ({ lat: w.lat, lng: w.lng }));
+    const path = waypoints.length >= 2
+      ? waypoints.map(w => ({ lat: w.lat, lng: w.lng }))
+      : geoDamagePoints.map(dp => ({ lat: dp.lat!, lng: dp.lng! }));
     const startPoint = path[0];
     const endPoint = path[path.length - 1];
 
     const onLoadMap = (map: google.maps.Map) => {
-      if (typeof window !== 'undefined' && window.google?.maps?.LatLngBounds) {
+      if (typeof window !== 'undefined' && window.google?.maps?.LatLngBounds && path.length > 0) {
         const bounds = new window.google.maps.LatLngBounds();
         path.forEach(p => bounds.extend(p));
-        map.fitBounds(bounds, { top: 20, right: 20, bottom: 20, left: 20 });
+        geoDamagePoints.forEach(dp => bounds.extend({ lat: dp.lat!, lng: dp.lng! }));
+        map.fitBounds(bounds, { top: 24, right: 24, bottom: 24, left: 24 });
       }
     };
 
@@ -226,48 +264,91 @@ export default function DamageLogTab({
             }
           }}
         >
-          <Polyline
-            path={path}
-            options={{
-              strokeColor: "#3b82f6",
-              strokeOpacity: 0.8,
-              strokeWeight: 4,
-            }}
-          />
-          <Marker
-            position={startPoint}
-            icon={{
-              path: (window.google?.maps?.SymbolPath?.CIRCLE ?? 0),
-              scale: 6,
-              fillColor: "#10b981",
-              fillOpacity: 1,
-              strokeWeight: 2,
-              strokeColor: "#FFFFFF",
-            }}
-          />
-          <Marker
-            position={endPoint}
-            icon={{
-              path: (window.google?.maps?.SymbolPath?.CIRCLE ?? 0),
-              scale: 6,
-              fillColor: "#ef4444",
-              fillOpacity: 1,
-              strokeWeight: 2,
-              strokeColor: "#FFFFFF",
-            }}
-          />
+          {path.length >= 2 && (
+            <Polyline
+              path={path}
+              options={{
+                strokeColor: "#3b82f6",
+                strokeOpacity: 0.85,
+                strokeWeight: 4,
+              }}
+            />
+          )}
+          {startPoint && (
+            <Marker
+              position={startPoint}
+              icon={{
+                path: (window.google?.maps?.SymbolPath?.CIRCLE ?? 0),
+                scale: 6,
+                fillColor: "#10b981",
+                fillOpacity: 1,
+                strokeWeight: 2,
+                strokeColor: "#FFFFFF",
+              }}
+            />
+          )}
+          {endPoint && path.length > 1 && (
+            <Marker
+              position={endPoint}
+              icon={{
+                path: (window.google?.maps?.SymbolPath?.CIRCLE ?? 0),
+                scale: 6,
+                fillColor: "#38bdf8",
+                fillOpacity: 1,
+                strokeWeight: 2,
+                strokeColor: "#FFFFFF",
+              }}
+            />
+          )}
+
+          {/* Accelerometer Vibration Damage Points Plotted on Route */}
+          {geoDamagePoints.map((dp, idx) => {
+            const severityColor =
+              dp.severity === 'severe' || dp.score >= 50
+                ? '#ef4444'
+                : dp.severity === 'moderate' || dp.score >= 25
+                ? '#f59e0b'
+                : '#10b981';
+            return (
+              <Marker
+                key={dp.id || `dp-${idx}`}
+                position={{ lat: dp.lat!, lng: dp.lng! }}
+                icon={{
+                  path: (window.google?.maps?.SymbolPath?.CIRCLE ?? 0),
+                  scale: dp.severity === 'severe' ? 9 : dp.severity === 'moderate' ? 7.5 : 6,
+                  fillColor: severityColor,
+                  fillOpacity: 0.95,
+                  strokeWeight: 2,
+                  strokeColor: "#FFFFFF",
+                }}
+                onClick={() => {
+                  setSelectedEvent({
+                    type: dp.label || `Vibration Impact (${(dp.severity || 'moderate').toUpperCase()})`,
+                    timestamp: dp.timestamp,
+                    lat: dp.lat!,
+                    lng: dp.lng!,
+                    gForce: dp.gForce,
+                    vibrationRms: dp.vibrationRms,
+                    speed: dp.speed,
+                    severity: dp.severity,
+                  });
+                }}
+              />
+            );
+          })}
+
           {events.map((event, idx) => {
             if (!event.location) return null;
             return (
               <Marker
-                key={idx}
+                key={`evt-${idx}`}
                 position={{ lat: event.location.lat, lng: event.location.lng }}
                 icon={{
                   path: (window.google?.maps?.SymbolPath?.CIRCLE ?? 0),
-                  scale: 8,
+                  scale: 7,
                   fillColor: event.type === 'harsh_braking' ? '#ef4444' : event.type === 'rapid_acceleration' ? '#f59e0b' : '#a855f7',
-                  fillOpacity: 0.9,
-                  strokeWeight: 2,
+                  fillOpacity: 0.85,
+                  strokeWeight: 1.5,
                   strokeColor: "#FFFFFF",
                 }}
                 onClick={() => {
@@ -348,15 +429,28 @@ export default function DamageLogTab({
                 pixelOffset: (typeof window !== 'undefined' && window.google?.maps?.Size ? new window.google.maps.Size(0, -10) : undefined),
               }}
             >
-              <div className="p-1 text-black max-w-[200px]">
-                <p className="text-xs font-bold uppercase tracking-tighter mb-1">
-                  {selectedEvent.type.startsWith('Note:') ? 'Custom Note' : selectedEvent.type.replace('_', ' ')}
+              <div className="p-1.5 text-black max-w-[210px] space-y-1">
+                <p className="text-xs font-bold uppercase tracking-tight">
+                  {selectedEvent.type.startsWith('Note:') ? 'Custom Note' : selectedEvent.type.replace(/_/g, ' ')}
                 </p>
-                <p className="text-[10px] leading-tight mb-2">
-                  {selectedEvent.type.startsWith('Note:') ? selectedEvent.type.substring(6) : ''}
-                </p>
-                <div className="flex justify-between items-center">
-                  <p className="text-[8px] font-mono text-gray-400">
+                {selectedEvent.type.startsWith('Note:') && (
+                  <p className="text-[10px] leading-tight">{selectedEvent.type.substring(6)}</p>
+                )}
+                {(selectedEvent.gForce !== undefined || selectedEvent.vibrationRms !== undefined) && (
+                  <div className="text-[10px] font-mono bg-gray-100 p-1.5 rounded space-y-0.5">
+                    {selectedEvent.gForce !== undefined && (
+                      <div>Peak Shock: <strong>{selectedEvent.gForce.toFixed(2)} G</strong></div>
+                    )}
+                    {selectedEvent.vibrationRms !== undefined && (
+                      <div>Vibration RMS: <strong>{selectedEvent.vibrationRms.toFixed(2)} G</strong></div>
+                    )}
+                    {selectedEvent.speed !== undefined && (
+                      <div>Vehicle Speed: <strong>{selectedEvent.speed} MPH</strong></div>
+                    )}
+                  </div>
+                )}
+                <div className="flex justify-between items-center pt-1">
+                  <p className="text-[9px] font-mono text-gray-500">
                     {new Date(selectedEvent.timestamp).toLocaleTimeString()}
                   </p>
                   {selectedEvent.type.startsWith('Note:') && (
@@ -365,7 +459,7 @@ export default function DamageLogTab({
                         handleDeleteMarker(trip, selectedEvent.timestamp);
                         setSelectedEvent(null);
                       }}
-                      className="text-[8px] text-red-500 font-bold uppercase"
+                      className="text-[9px] text-red-500 font-bold uppercase"
                     >
                       Delete
                     </button>
@@ -393,18 +487,18 @@ export default function DamageLogTab({
       <div className="flex items-center justify-between px-2">
         <h2 className="text-xl font-bold flex items-center gap-2">
           <Activity className="text-car-accent" size={24} />
-          Damage Analysis
+          Damage & Vibration Plotter
         </h2>
         <button
           onClick={exportFullReport}
-          className="flex items-center gap-2 px-3 py-1.5 bg-car-accent/10 hover:bg-car-accent/20 text-car-accent rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all border border-car-accent/20"
+          className="flex items-center gap-2 px-3 py-1.5 bg-car-accent/10 hover:bg-car-accent/20 text-car-accent rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all border border-car-accent/20 cursor-pointer"
         >
           <Download size={14} />
           Export Data
         </button>
       </div>
 
-      {/* Live Damage Score */}
+      {/* Live Damage Score & Real-Time Vibration Waveforms (Primary Gauge) */}
       <div className="glass-card p-6 rounded-3xl flex flex-col items-center gap-4 text-center relative overflow-hidden">
         <div className="absolute inset-0 opacity-10" style={{ background: `radial-gradient(circle at center, ${getScoreDetails(score).stroke} 0%, transparent 70%)` }} />
         <div className="relative z-10">
@@ -451,9 +545,9 @@ export default function DamageLogTab({
           {/* Accelerometer Chart */}
           <div className="space-y-1">
             <div className="flex justify-between items-center px-1">
-              <span className="text-[8px] uppercase tracking-widest text-car-purple font-mono">Accelerometer (G)</span>
+              <span className="text-[8px] uppercase tracking-widest text-car-purple font-mono">Accelerometer Vibration (G)</span>
               <span className="text-[10px] font-mono text-white/40">
-                {sensorHistory.length > 0 ? sensorHistory[sensorHistory.length - 1].accel.toFixed(2) : '0.00'} G
+                {currentAccelG.toFixed(2)} G
               </span>
             </div>
             <div className="h-20 w-full bg-black/20 rounded-xl p-1 border border-white/5">
@@ -465,6 +559,7 @@ export default function DamageLogTab({
                       <stop offset="95%" stopColor="#A855F7" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
+                  <ReferenceLine y={1.2} stroke="#ef4444" strokeDasharray="3 3" />
                   <Area 
                     type="monotone" 
                     dataKey="accel" 
@@ -489,7 +584,7 @@ export default function DamageLogTab({
           {/* Gyroscope Chart */}
           <div className="space-y-1">
             <div className="flex justify-between items-center px-1">
-              <span className="text-[8px] uppercase tracking-widest text-car-success font-mono">Gyroscope (°/s)</span>
+              <span className="text-[8px] uppercase tracking-widest text-car-success font-mono">Gyroscope Chassis Roll (°/s)</span>
               <span className="text-[10px] font-mono text-white/40">
                 {sensorHistory.length > 0 ? sensorHistory[sensorHistory.length - 1].gyro.toFixed(0) : '0'} °/s
               </span>
@@ -526,12 +621,201 @@ export default function DamageLogTab({
         </div>
       </div>
 
+      {/* 10-Trip Damage Score & Average Vibration Trend Line Chart */}
+      <TripDamageVibrationTrendChart trips={trips} />
+
+      {/* Mobile Accelerometer Vibration Sensor & Damage Logger Card */}
+      <div className="glass-card p-4 rounded-2xl border border-car-purple/25 bg-gradient-to-br from-car-purple/10 via-black/40 to-black/60 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-car-purple/15 text-car-purple border border-car-purple/30">
+              <Smartphone size={18} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-white">
+                  Accelerometer Vibration Sensor
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-mono uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  ACTIVE
+                </span>
+              </div>
+              <p className="text-[10px] text-white/50 font-mono mt-0.5">
+                High-Pass Road Shock & Chassis Vibration Damage Logger
+              </p>
+            </div>
+          </div>
+
+          {onRequestSensorPermission && (
+            <button
+              onClick={onRequestSensorPermission}
+              className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[9px] font-mono uppercase text-white/70 hover:text-white transition-colors cursor-pointer"
+              title="Calibrate / Grant Mobile Motion Sensor Permission"
+            >
+              Calibrate IMU
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-black/40 p-2.5 rounded-xl border border-white/5">
+            <span className="text-[9px] uppercase tracking-wider text-white/40 font-mono block">Peak G-Force</span>
+            <span className="text-base font-bold font-mono text-car-purple">
+              {currentAccelG.toFixed(2)} G
+            </span>
+          </div>
+          <div className="bg-black/40 p-2.5 rounded-xl border border-white/5">
+            <span className="text-[9px] uppercase tracking-wider text-white/40 font-mono block">Vibration RMS</span>
+            <span className="text-base font-bold font-mono text-amber-400">
+              {currentVibrationRms.toFixed(2)} G
+            </span>
+          </div>
+          <div className="bg-black/40 p-2.5 rounded-xl border border-white/5">
+            <span className="text-[9px] uppercase tracking-wider text-white/40 font-mono block">Damage Points</span>
+            <span className="text-base font-bold font-mono text-car-accent">
+              {(activePlotTrip?.damageHistory || []).length} PTS
+            </span>
+          </div>
+        </div>
+
+        {onLogDamagePoint && (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button
+              onClick={() => onLogDamagePoint('moderate', 'Road Pothole / Suspension Jolt')}
+              className="flex-1 py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-[10px] font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            >
+              <PlusCircle size={13} />
+              Log Moderate Shock
+            </button>
+            <button
+              onClick={() => onLogDamagePoint('severe', 'Severe Impact / Chassis Bottom-Out')}
+              className="flex-1 py-2 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-[10px] font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            >
+              <ShieldAlert size={13} />
+              Log Severe Impact
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Interactive Trip Damage Plot Map & Vibration Timeline */}
+      {activePlotTrip && (
+        <div className="glass-card p-4 rounded-2xl border border-white/10 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-1.5">
+                <Zap size={14} className="text-amber-400" />
+                Trip Vibration Damage Plotter
+              </h3>
+              <p className="text-[10px] text-white/40 font-mono">
+                Geo-tagged accelerometer shock & vibration points saved for review
+              </p>
+            </div>
+            <select
+              value={selectedPlotTripId}
+              onChange={(e) => setSelectedPlotTripId(e.target.value)}
+              className="bg-black/60 border border-white/15 rounded-xl px-2.5 py-1.5 text-[10px] font-mono text-white focus:outline-none focus:border-car-accent"
+            >
+              {isRecording && <option value="live">Active Recording Trip</option>}
+              {trips.map((t, i) => (
+                <option key={t.id} value={t.id}>
+                  Trip #{trips.length - i} • {new Date(t.startTime).toLocaleDateString()} ({t.damageHistory?.length || 0} pts)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Route Map with Plotted Damage Points */}
+          <div className="h-56 w-full bg-black/40 rounded-xl border border-white/10 overflow-hidden">
+            {renderRoute(activePlotTrip)}
+          </div>
+
+          {/* Legend */}
+          <div className="flex items-center justify-between px-1 text-[9px] font-mono text-white/50">
+            <div className="flex items-center gap-3">
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" /> Minor (&lt;1.0G)
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> Moderate (1.0–1.5G)
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" /> Severe (&gt;1.5G)
+              </span>
+            </div>
+            <span>Tap map pin to inspect</span>
+          </div>
+
+          {/* Saved Damage Points List for Selected Trip */}
+          {activePlotTrip.damageHistory && activePlotTrip.damageHistory.length > 0 && (
+            <div className="space-y-2 pt-1">
+              <span className="text-[9px] uppercase tracking-widest text-white/40 font-mono block">
+                Logged Accelerometer Damage Points ({activePlotTrip.damageHistory.length})
+              </span>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                {activePlotTrip.damageHistory.map((dp, idx) => {
+                  const sev = dp.severity || (dp.score >= 50 ? 'severe' : dp.score >= 25 ? 'moderate' : 'minor');
+                  return (
+                    <div
+                      key={dp.id || idx}
+                      onClick={() => {
+                        if (typeof dp.lat === 'number' && typeof dp.lng === 'number') {
+                          setSelectedEvent({
+                            type: dp.label || `Vibration Impact (${sev.toUpperCase()})`,
+                            timestamp: dp.timestamp,
+                            lat: dp.lat,
+                            lng: dp.lng,
+                            gForce: dp.gForce,
+                            vibrationRms: dp.vibrationRms,
+                            speed: dp.speed,
+                            severity: sev,
+                          });
+                        }
+                      }}
+                      className="flex items-center justify-between p-2.5 rounded-xl bg-black/40 border border-white/5 hover:border-white/15 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span
+                          className={cn(
+                            "w-2.5 h-2.5 rounded-full shrink-0",
+                            sev === 'severe' ? "bg-rose-500" : sev === 'moderate' ? "bg-amber-400" : "bg-emerald-400"
+                          )}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-white/90 truncate">
+                            {dp.label || `Road Vibration Spike #${idx + 1}`}
+                          </p>
+                          <p className="text-[9px] font-mono text-white/40">
+                            {new Date(dp.timestamp).toLocaleTimeString()}
+                            {dp.speed !== undefined ? ` • ${dp.speed} MPH` : ''}
+                            {typeof dp.lat === 'number' ? ` • ${dp.lat.toFixed(4)}, ${dp.lng?.toFixed(4)}` : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0 ml-2">
+                        <span className="text-xs font-mono font-bold text-white block">
+                          {(dp.gForce ?? (0.5 + dp.score / 40)).toFixed(2)} G
+                        </span>
+                        <span className="text-[9px] font-mono text-white/40">
+                          RMS {(dp.vibrationRms ?? (0.15 + dp.score / 100)).toFixed(2)}G
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Trip History */}
       <div className="space-y-4">
         <div className="flex items-center justify-between px-2">
           <h3 className="font-bold flex items-center gap-2">
             <History size={18} className="text-car-accent" />
-            Trip History
+            Saved Trip Damage Logs
           </h3>
           <div className="flex items-center gap-3">
             <span className="text-[10px] text-white/40 font-mono uppercase">{trips.length} Recorded</span>
@@ -563,7 +847,10 @@ export default function DamageLogTab({
                 key={trip.id}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
-                onClick={() => setExpandedTripId(expandedTripId === trip.id ? null : trip.id)}
+                onClick={() => {
+                  setExpandedTripId(expandedTripId === trip.id ? null : trip.id);
+                  setSelectedPlotTripId(trip.id);
+                }}
                 className={cn(
                   "p-4 rounded-2xl flex flex-col group cursor-pointer transition-all duration-300 border backdrop-blur-md",
                   expandedTripId === trip.id ? `bg-black/60 ${details.border}` : `bg-black/40 border-white/5 hover:border-white/20`
@@ -589,15 +876,15 @@ export default function DamageLogTab({
                       <div className="flex items-center gap-4 mt-2">
                         <div className="flex items-center gap-1.5 text-[10px] text-white/60 font-mono">
                           <Clock size={12} className="text-car-accent" />
-                          {Math.round((trip.endTime! - trip.startTime) / 60000)} MIN
+                          {Math.round(((trip.endTime || Date.now()) - trip.startTime) / 60000)} MIN
                         </div>
                         <div className="flex items-center gap-1.5 text-[10px] text-white/60 font-mono">
                           <MapPin size={12} className="text-car-cyan" />
                           {trip.distance.toFixed(1)} MI
                         </div>
                         <div className="flex items-center gap-1.5 text-[10px] text-white/60 font-mono">
-                          <AlertTriangle size={12} className={trip.events.length > 0 ? "text-car-warning" : "text-white/20"} />
-                          {trip.events.length} EVT
+                          <AlertTriangle size={12} className={(trip.damageHistory?.length || 0) > 0 ? "text-car-warning" : "text-white/20"} />
+                          {trip.damageHistory?.length || 0} DMG PTS
                         </div>
                       </div>
                     </div>
@@ -663,3 +950,4 @@ export default function DamageLogTab({
     </div>
   );
 }
+

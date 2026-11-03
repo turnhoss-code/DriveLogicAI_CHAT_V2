@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrainCircuit, AlertCircle, CheckCircle2, Zap, Thermometer, Gauge, Activity, Bluetooth, AlertTriangle, ShieldCheck, ShieldAlert, Info, Usb, ExternalLink, Sparkles, Download, Check, Loader2 } from 'lucide-react';
+import { BrainCircuit, AlertCircle, CheckCircle2, Zap, Thermometer, Gauge, Activity, Bluetooth, AlertTriangle, ShieldCheck, ShieldAlert, Info, Usb, ExternalLink, Sparkles, Download, Check, Loader2, Box } from 'lucide-react';
 import { OBDData, SubscriptionTier } from '../types';
 import { runAIDiagnosis, fetchDTCDefinition } from '../services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
@@ -26,6 +26,7 @@ interface OBDTabProps {
   vehicleModel?: string;
   googleAccessToken?: string | null;
   onLinkDrive?: () => Promise<any> | void;
+  onOpen3DStudio?: () => void;
 }
 
 export default function OBDTab({ 
@@ -45,7 +46,8 @@ export default function OBDTab({
   totalMileage,
   vehicleModel,
   googleAccessToken,
-  onLinkDrive
+  onLinkDrive,
+  onOpen3DStudio
 }: OBDTabProps) {
   const [localDiagnosis, setLocalDiagnosis] = useState<string | null>(null);
   const [localIsAnalyzing, setLocalIsAnalyzing] = useState(false);
@@ -267,8 +269,57 @@ ${diagnosis}
     return null;
   };
 
+  // Listen for DriveLogic voice commands targeting OBDTab (DTC code lookup, report download)
+  useEffect(() => {
+    const onVoiceCommand = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail) return;
+      if (detail.name === 'diagnoseVehicle') {
+        if (detail.args?.dtcCode) {
+          handleCodeClick(String(detail.args.dtcCode).toUpperCase().trim());
+        }
+        if (detail.args?.downloadReport) {
+          handleDownloadDiagnosis();
+        }
+      }
+    };
+    window.addEventListener('drivelogic:command', onVoiceCommand);
+    return () => window.removeEventListener('drivelogic:command', onVoiceCommand);
+  });
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 pt-1">
+      {/* Unobstructed DriveLogic Brand & Vehicle Command Header */}
+      <div className="glass-card p-4 rounded-2xl border border-emerald-500/25 bg-gradient-to-r from-emerald-950/40 via-car-card to-car-card flex items-center justify-between gap-3 shadow-lg">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+            <Sparkles size={20} />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base sm:text-lg font-extrabold tracking-tight text-white truncate">
+                DriveLogic
+              </h2>
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
+                Eclipse Voice
+              </span>
+            </div>
+            <p className="text-[10px] font-mono text-white/60 truncate">
+              {vehicleModel || '2023 Toyota Camry'} • Hands-Free OBD-II & Web Diagnostics
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col items-end shrink-0">
+          <span className="text-[9px] font-mono uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+            Search Grounded
+          </span>
+          <span className="text-[9px] font-mono text-white/40 mt-0.5">
+            Say "Hey, DriveLogic"
+          </span>
+        </div>
+      </div>
+
       {/* Browser Compatibility Warning */}
       {(!isBluetoothSupported || !isSerialSupported || isInIframe) && !connectionError && connectionStatus === 'disconnected' && (
         <div className="p-4 bg-car-accent/5 border border-car-accent/20 rounded-2xl space-y-3">
@@ -308,7 +359,7 @@ ${diagnosis}
       {/* Connection Status Indicator */}
       <div className="space-y-2 relative">
         {/* Dashboard Interior Background for Gauges */}
-        <div className="absolute -inset-4 opacity-5 pointer-events-none overflow-hidden rounded-3xl -z-10">
+        <div className="absolute inset-0 opacity-5 pointer-events-none overflow-hidden rounded-3xl -z-10">
           <img 
             src="https://www.rawhide.org/wp-content/uploads/2016/02/27-Dashboard-Symbols.jpg" 
             alt="Dashboard backdrop" 
@@ -324,39 +375,43 @@ ${diagnosis}
               <div className="flex items-center gap-2">
                 <div className={cn("w-2 h-2 rounded-full", status.dot)} />
                 <span className="text-xs font-bold uppercase tracking-widest">{status.label}</span>
+                {data.deviceName && (
+                  <span className="px-1.5 py-0.5 rounded bg-car-accent/20 text-car-accent text-[9px] font-mono">
+                    {data.deviceName}
+                  </span>
+                )}
               </div>
               <p className="text-[10px] opacity-60 font-mono">
-                {connectionStatus === 'connecting' ? 'Searching for Bluetooth devices...' : 
-                 connectionStatus === 'connected' ? 'Data stream active' : 'Connect adapter to see real telemetry'}
+                {connectionStatus === 'connecting' ? 'Auto-detecting ELM327 BLE & sensing protocol...' : 
+                 connectionStatus === 'connected' ? `Protocol: ${data.detectedProtocol || 'AUTO, ISO 15765-4 (CAN 11/500)'}` : 'Auto-detects ELM327 BLE or connect manually'}
               </p>
             </div>
           </div>
-          {connectionStatus === 'disconnected' && (
-            <div className="flex gap-2">
-              <button 
-                onClick={handleConnect}
-                className="px-3 py-1.5 bg-car-accent text-white rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-car-accent/80 transition-colors flex items-center gap-1"
-                title="Connect via Bluetooth"
-              >
-                <Bluetooth className="w-3 h-3" /> BT
-              </button>
-              <button 
-                onClick={async () => {
-                  try {
-                    await onConnectSerial();
-                    setConnectionError(null);
-                  } catch (err) {
-                    setConnectionError(err instanceof Error ? err.message : 'Failed to connect via USB');
-                  }
-                }}
-                className="px-3 py-1.5 bg-car-purple text-white rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-car-purple/80 transition-colors flex items-center gap-1"
-                title="Connect via 1260 USB Serial Cable"
-              >
-                <Usb className="w-3 h-3" /> USB
-              </button>
-            </div>
-          )}
+          <div className="flex gap-2">
+            <button 
+              onClick={handleConnect}
+              className="px-3 py-1.5 bg-car-accent text-white rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-car-accent/80 transition-colors flex items-center gap-1 cursor-pointer"
+              title="Auto-Detect & Connect ELM327 BLE Module"
+            >
+              <Bluetooth className="w-3 h-3" /> {connectionStatus === 'connected' ? 'RE-SCAN BLE' : 'ELM327 BLE'}
+            </button>
+            <button 
+              onClick={async () => {
+                try {
+                  await onConnectSerial();
+                  setConnectionError(null);
+                } catch (err) {
+                  setConnectionError(err instanceof Error ? err.message : 'Failed to connect via USB');
+                }
+              }}
+              className="px-3 py-1.5 bg-car-purple text-white rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-car-purple/80 transition-colors flex items-center gap-1 cursor-pointer"
+              title="Connect via 1260 USB Serial Cable"
+            >
+              <Usb className="w-3 h-3" /> USB
+            </button>
+          </div>
         </div>
+
       {connectionError && (
         <div className="space-y-2">
           <div className="p-4 bg-car-danger/10 border border-car-danger/20 rounded-2xl">
@@ -390,7 +445,7 @@ ${diagnosis}
       )}
       </div>
 
-      {/* Main Gauges Section */}
+      {/* Main Gauges Section (Pre-existing Primary Gauges) */}
       <div className="grid grid-cols-2 gap-4">
         {metrics.slice(0, 2).map((m) => (
           <div key={m.label} className="glass-card p-6 rounded-3xl flex flex-col items-center gap-2 text-center border-b-2 border-car-accent/20">
@@ -402,6 +457,68 @@ ${diagnosis}
             <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-white/40">{m.label}</span>
           </div>
         ))}
+      </div>
+
+      {/* 3D Digital Twin Quick Launch */}
+      {onOpen3DStudio && (
+        <button
+          onClick={onOpen3DStudio}
+          className="w-full p-3.5 bg-gradient-to-r from-cyan-950/40 via-car-card to-car-card border border-cyan-500/20 hover:border-cyan-500/40 rounded-3xl flex items-center justify-between text-left transition-all group shadow-lg shadow-cyan-950/20 cursor-pointer"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 group-hover:scale-105 transition-transform shrink-0">
+              <Box size={20} />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-white tracking-wide flex items-center gap-1.5">
+                3D Digital Twin Studio
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono font-normal">PBR</span>
+              </p>
+              <p className="text-[10px] text-white/50 font-mono">Live telemetry rotation, exploded view & diagnostics</p>
+            </div>
+          </div>
+          <span className="text-[10px] font-mono text-cyan-400 uppercase tracking-widest px-2.5 py-1 bg-cyan-500/10 rounded-lg border border-cyan-500/20 group-hover:bg-cyan-500/20 transition-colors shrink-0">
+            Inspect →
+          </span>
+        </button>
+      )}
+
+      {/* ELM327 BLE Auto-Detection & Vehicle Protocol Auto-Sensing Card */}
+      <div className="p-3.5 rounded-2xl bg-black/40 border border-white/10 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Bluetooth size={14} className="text-car-accent" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/90 font-mono">
+              ELM327 BLE Auto-Sense Protocol Engine
+            </span>
+          </div>
+          <span className={cn(
+            "px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase border",
+            data.protocolStatus === 'auto_sensing' || connectionStatus === 'connecting'
+              ? "bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse"
+              : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+          )}>
+            {data.protocolStatus === 'auto_sensing' || connectionStatus === 'connecting' ? 'SENSING (ATSP0)...' : 'PROTOCOL LOCKED'}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+          <div className="bg-white/5 p-2 rounded-xl border border-white/5">
+            <span className="text-white/40 block text-[8px] uppercase">Detected ECU Protocol (ATDP)</span>
+            <span className="text-car-accent font-bold truncate block mt-0.5">
+              {data.detectedProtocol || 'AUTO, ISO 15765-4 (CAN 11/500)'}
+            </span>
+          </div>
+          <div className="bg-white/5 p-2 rounded-xl border border-white/5">
+            <span className="text-white/40 block text-[8px] uppercase">BLE GATT Profile</span>
+            <span className="text-white/85 font-bold truncate block mt-0.5">
+              {data.deviceName || 'ELM327 BLE (0xFFE0 / 0xFFF0)'}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center justify-between text-[9px] font-mono text-white/40 pt-0.5">
+          <span>Init Sequence: ATZ ➔ ATE0 ➔ ATL0 ➔ ATSP0 ➔ 0100 ➔ ATDP</span>
+          <span className="text-emerald-400">Auto-Reconnect ON</span>
+        </div>
       </div>
 
       {/* Live Charts Section */}
