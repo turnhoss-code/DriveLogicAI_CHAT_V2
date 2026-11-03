@@ -94,97 +94,10 @@ export function resetAudioPlayback() {
   }
 }
 
-let cachedVoices: SpeechSynthesisVoice[] = [];
-if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-  try {
-    cachedVoices = window.speechSynthesis.getVoices();
-    window.speechSynthesis.onvoiceschanged = () => {
-      cachedVoices = window.speechSynthesis.getVoices();
-    };
-  } catch {
-    // ignore
-  }
-}
-
-export function selectNaturalFemaleBrowserVoice(): SpeechSynthesisVoice | null {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
-  const voices = cachedVoices.length > 0 ? cachedVoices : window.speechSynthesis.getVoices();
-  if (!voices || voices.length === 0) return null;
-
-  const preferredFemaleNames = [
-    'Google US English',
-    'Google UK English Female',
-    'Microsoft Aria Online (Natural)',
-    'Microsoft Jenny Online (Natural)',
-    'Microsoft Sonia Online (Natural)',
-    'Samantha',
-    'Ava (Enhanced)',
-    'Allison (Enhanced)',
-    'Victoria',
-    'Karen',
-    'Moira',
-    'Tessa',
-    'Zira',
-    'Female',
-  ];
-
-  for (const name of preferredFemaleNames) {
-    const match = voices.find(v => v.name.toLowerCase().includes(name.toLowerCase()));
-    if (match) return match;
-  }
-
-  const anyFemaleEn = voices.find(
-    v =>
-      v.lang.startsWith('en') &&
-      /female|woman|samantha|victoria|karen|aria|jenny|zira|google/i.test(v.name)
-  );
-  if (anyFemaleEn) return anyFemaleEn;
-
-  return voices.find(v => v.lang.startsWith('en')) || voices[0] || null;
-}
-
-export function speakFallbackFemaleVoice(text: string, onEnd?: () => void) {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-    onEnd?.();
-    return;
-  }
-  try {
-    if (window.speechSynthesis.paused) {
-      window.speechSynthesis.resume();
-    }
-    window.speechSynthesis.cancel();
-    const cleanText = text
-      .replace(/---[\s\S]*$/g, '')
-      .replace(/[*#_`~]/g, '')
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      .trim();
-    if (!cleanText) {
-      onEnd?.();
-      return;
-    }
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    const femaleVoice = selectNaturalFemaleBrowserVoice();
-    if (femaleVoice) {
-      utterance.voice = femaleVoice;
-    }
-    utterance.rate = 1.0;
-    utterance.pitch = 1.06;
-    utterance.volume = 1.0;
-    utterance.onend = () => onEnd?.();
-    utterance.onerror = () => onEnd?.();
-    window.speechSynthesis.speak(utterance);
-
-    // Safeguard for browsers that randomly pause synthesis
-    setTimeout(() => {
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      }
-    }, 120);
-  } catch {
-    onEnd?.();
-  }
-}
-
+/**
+ * Speaks exclusively using the Gemini Live / Gemini TTS Eclipse Natural Voice (Kore).
+ * Generic chatbot browser voices are completely removed.
+ */
 export async function speakWithEclipseTTS(
   text: string,
   audioCtx?: AudioContext | null,
@@ -219,22 +132,26 @@ export async function speakWithEclipseTTS(
       },
       body: JSON.stringify({
         text: cleanText.slice(0, 600),
-        voice: 'Kore', // Eclipse Natural Female Voice
+        voice: 'Kore', // Eclipse Natural Voice only
       }),
     });
 
     if (res.ok) {
       const data = await res.json();
       if (data?.audio && audioCtx) {
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume().catch(() => {});
+        }
         playAudioChunk(audioCtx, data.audio, destination || audioCtx.destination, onEnd);
         return true;
       }
     }
-  } catch {
-    // Fall back to natural female browser voice if offline or quota exceeded
+  } catch (err) {
+    console.warn("Eclipse TTS streaming error:", err);
   }
 
-  speakFallbackFemaleVoice(cleanText, onEnd);
+  // Never fall back to generic robot voices
+  onEnd?.();
   return false;
 }
 

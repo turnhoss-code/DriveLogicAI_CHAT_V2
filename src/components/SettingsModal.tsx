@@ -63,19 +63,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [geminiVolume, setGeminiVolume] = useState<'low' | 'medium' | 'high'>(() => {
     return (localStorage.getItem('ztcd_gemini_voice_volume') as 'low' | 'medium' | 'high') || 'high';
   });
-  const [liveVoice, setLiveVoice] = useState<string>(() => {
-    return localStorage.getItem('ztcd_live_voice') || 'Kore';
-  });
+  const liveVoice = 'Kore'; // Exclusively Eclipse natural voice
 
   const handleVolumeChange = (newVol: 'low' | 'medium' | 'high') => {
     setGeminiVolume(newVol);
     localStorage.setItem('ztcd_gemini_voice_volume', newVol);
-  };
-
-  const handleVoiceChange = (newVoice: string) => {
-    setLiveVoice(newVoice);
-    localStorage.setItem('ztcd_live_voice', newVoice);
-    window.dispatchEvent(new CustomEvent('drivelogic:voice-change', { detail: { voice: newVoice } }));
   };
 
   const handleSave = () => {
@@ -304,46 +296,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             </section>
 
-            {/* Gemini Live Natural Voice Selection Section */}
+            {/* Gemini Live Natural Voice Section */}
             <section className="space-y-3 bg-white/[0.02] p-4 rounded-2xl border border-emerald-500/20">
               <div className="flex items-center justify-between">
                 <label className="text-[10px] uppercase tracking-widest text-emerald-400 font-mono flex items-center gap-2 font-bold">
                   <Sparkles size={12} className="text-emerald-400" />
-                  Gemini Live Natural Voice
+                  Gemini Live Voice
                 </label>
                 <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 uppercase font-bold border border-emerald-500/30">
-                  {liveVoice === 'Kore' ? 'Eclipse (Kore)' : liveVoice}
+                  Eclipse Natural Voice Active
                 </span>
               </div>
               <p className="text-[10px] text-white/50">
-                Select your real-time natural streaming voice for DriveLogic hands-free assistance and diagnostics.
+                DriveLogic exclusively uses the human, expressive Eclipse voice with Gemini Live real-time audio. Generic chatbot voices are completely disabled.
               </p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {[
-                  { id: 'Kore', label: 'Eclipse (Kore)', type: 'Female', desc: 'Warm, natural & conversational (Recommended)' },
-                  { id: 'Aoede', label: 'Aoede', type: 'Female', desc: 'Expressive & fluid co-pilot' },
-                  { id: 'Puck', label: 'Puck', type: 'Male', desc: 'Upbeat, friendly & energetic' },
-                  { id: 'Fenrir', label: 'Fenrir', type: 'Male', desc: 'Deep, clear & authoritative' },
-                  { id: 'Charon', label: 'Charon', type: 'Male', desc: 'Calm, measured & steady' },
-                ].map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => handleVoiceChange(item.id)}
-                    className={cn(
-                      "p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between",
-                      liveVoice === item.id 
-                        ? "bg-emerald-500/20 border-emerald-400 text-white shadow-sm ring-1 ring-emerald-500/50" 
-                        : "bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white"
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="text-xs font-bold font-mono text-white">{item.label}</span>
-                      <span className="text-[8px] font-mono px-1 py-0.2 rounded bg-white/10 text-white/70">{item.type}</span>
-                    </div>
-                    <span className="text-[9px] text-white/40 mt-1 leading-tight">{item.desc}</span>
-                  </button>
-                ))}
+              <div className="p-3 rounded-xl border bg-emerald-500/15 border-emerald-500/40 text-white flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold font-mono text-white">Eclipse (Kore)</span>
+                    <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-emerald-400/20 text-emerald-300 font-bold uppercase">Locked Default</span>
+                  </div>
+                  <p className="text-[9px] text-emerald-200/70 mt-0.5">Warm, human female co-pilot • Waze & Crime Radar spoken only upon request</p>
+                </div>
+                <Sparkles size={16} className="text-emerald-400 shrink-0" />
               </div>
             </section>
 

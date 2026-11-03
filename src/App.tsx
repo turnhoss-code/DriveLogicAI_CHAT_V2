@@ -1477,9 +1477,9 @@ export default function App() {
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button 
-            onClick={() => setIsChatbotOpen(true)}
+            onClick={() => chatAssistantRef.current?.open()}
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 text-[10px] font-semibold hover:bg-emerald-500/25 transition-all shadow-sm cursor-pointer shrink-0"
-            title="Open DriveLogic Chat (Eclipse Female Voice • Google Search Grounded)"
+            title="Open DriveLogic Live Voice Chat (Eclipse Female Voice • Google Search Grounded)"
           >
             <Sparkles size={11} className="shrink-0 text-emerald-400 animate-pulse" />
             <span>Chat</span>

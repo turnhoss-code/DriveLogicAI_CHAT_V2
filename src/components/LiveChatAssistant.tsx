@@ -124,9 +124,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
   const [voiceVolume, setVoiceVolume] = useState<'low' | 'medium' | 'high' | 'mute'>(() => {
     return (localStorage.getItem('ztcd_gemini_voice_volume') as any) || 'high';
   });
-  const [liveVoice, setLiveVoice] = useState<string>(() => {
-    return localStorage.getItem('ztcd_live_voice') || 'Kore';
-  });
+  const liveVoice = 'Kore'; // Exclusively Eclipse natural voice (Gemini Live)
   const [useSearch, setUseSearch] = useState<boolean>(() => {
     return localStorage.getItem('ztcd_live_use_search') !== 'false';
   });
@@ -193,19 +191,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
     isLiveRef.current = isLive;
   }, [isLive]);
 
-  useEffect(() => {
-    const onVoiceChange = (e: Event) => {
-      const nextVoice = (e as CustomEvent)?.detail?.voice;
-      if (nextVoice) {
-        setLiveVoice(nextVoice);
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: 'init', voice: nextVoice }));
-        }
-      }
-    };
-    window.addEventListener('drivelogic:voice-change', onVoiceChange);
-    return () => window.removeEventListener('drivelogic:voice-change', onVoiceChange);
-  }, []);
+
 
   useEffect(() => {
     isMicActiveRef.current = isMicActive;
@@ -399,21 +385,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
     setVoiceVolume(next);
     localStorage.setItem('ztcd_gemini_voice_volume', next);
     if (outputGainRef.current) {
-      outputGainRef.current.gain.value = getGainValue(next);
     }
-  };
-
-  const cycleVoice = () => {
-    const voices = ['Kore', 'Aoede', 'Puck', 'Fenrir', 'Charon'];
-    const currentIndex = voices.indexOf(liveVoice);
-    const next = voices[(currentIndex + 1) % voices.length];
-    setLiveVoice(next);
-    localStorage.setItem('ztcd_live_voice', next);
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'init', voice: next }));
-    }
-    setActionNotification(`Live Voice: ${next === 'Kore' ? 'Eclipse (Kore)' : next}`);
-    setTimeout(() => setActionNotification(null), 3000);
   };
 
   // Load persistent chat history on mount or user switch, keeping greeting at start
@@ -1377,43 +1349,8 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
     return () => window.removeEventListener('drivelogic:proactive-scan', onProactiveScan);
   }, []);
 
-  // Automatically run initial hands-free 911 / Crime Radar / Waze / Weather / Prior-Trip verbal notification after greeting
-  useEffect(() => {
-    if (hasRunInitialProactiveScanRef.current || !proactiveAlertsEnabled) return;
-    hasRunInitialProactiveScanRef.current = true;
-
-    const timer = setTimeout(() => {
-      if (proactiveAlertsEnabledRef.current) {
-        runProactiveHazardBriefingRef.current();
-      }
-    }, 8200);
-
-    return () => clearTimeout(timer);
-  }, [proactiveAlertsEnabled]);
-
-  // Automatically trigger hands-free verbal briefing when navigation destination changes or trip recording starts
-  useEffect(() => {
-    if (!proactiveAlertsEnabled) return;
-    const dest = navigation?.to?.trim();
-    if (dest && dest !== lastScannedDestinationRef.current) {
-      lastScannedDestinationRef.current = dest;
-      const timer = setTimeout(() => {
-        runProactiveHazardBriefingRef.current(dest);
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [navigation?.to, proactiveAlertsEnabled]);
-
-  // Periodic hands-free background scan while proactive alerts are enabled (every 90 seconds)
-  useEffect(() => {
-    if (!proactiveAlertsEnabled) return;
-    const interval = setInterval(() => {
-      if (proactiveAlertsEnabledRef.current && activeSpeechState === 'idle') {
-        runProactiveHazardBriefingRef.current();
-      }
-    }, 90000);
-    return () => clearInterval(interval);
-  }, [proactiveAlertsEnabled, activeSpeechState]);
+  // Hazard, 911 CAD, and Crime Radar briefings are spoken ONLY UPON REQUEST from the driver
+  // (via voice command e.g. "What's ahead on my route?", "Check crime radar", or tapping "Radar On Request").
 
   // Keep Gemini Live WebSocket connected in the background for instant hands-free operation
   useEffect(() => {
@@ -1535,7 +1472,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
             </div>
             <div className="flex flex-col text-left">
               <span className="text-[11px] font-bold tracking-wide leading-none">DriveLogic</span>
-              <span className="text-[8.5px] font-mono text-emerald-100/90 leading-tight mt-0.5">Eclipse • 911 Live</span>
+              <span className="text-[8.5px] font-mono text-emerald-100/90 leading-tight mt-0.5">Eclipse Live Voice</span>
             </div>
           </button>
 
@@ -1549,7 +1486,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
                 ? "bg-rose-600/80 text-white border-rose-400 animate-pulse"
                 : "bg-zinc-950/90 hover:bg-rose-950/80 text-rose-400 border-rose-500/40"
             )}
-            title="Hands-Free 911, Crime Radar, Waze, Weather & Prior-Trip Verbal Briefing"
+            title="Check Waze, 911 Dispatch & Crime Radar on Request"
           >
             <Siren size={15} className={cn(isScanningRadar && "animate-spin")} />
           </button>
@@ -1585,7 +1522,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
                       </span>
                     </div>
                     <span className="text-[8.5px] font-mono text-emerald-400/80 leading-none truncate block mt-0.5">
-                      {isLive ? '911 • Crime Radar • Search Grounded • Hands-Free' : 'Connecting to Eclipse Real-Time Voice...'}
+                      {isLive ? 'Gemini Live • Eclipse Natural Voice • Search Grounded' : 'Connecting to Gemini Live (Eclipse Voice)...'}
                     </span>
                   </div>
                 </div>
@@ -1627,25 +1564,17 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
                 </div>
               </div>
 
-              {/* Sub-row for 911, Search Grounding, and Voice toggles */}
+              {/* Sub-row for Radar On Request, Search Grounding, and Eclipse Voice indicator */}
               <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
                 <button
                   type="button"
-                  onClick={() => {
-                    const next = !proactiveAlertsEnabled;
-                    setProactiveAlertsEnabled(next);
-                    localStorage.setItem('ztcd_proactive_911_alerts', String(next));
-                  }}
-                  className={cn(
-                    "px-2 py-0.5 rounded-full border flex items-center gap-1 text-[8.5px] font-mono tracking-wide transition-all cursor-pointer shrink-0",
-                    proactiveAlertsEnabled
-                      ? "bg-rose-500/20 text-rose-300 border-rose-400/50 hover:bg-rose-500/30"
-                      : "bg-white/5 text-white/40 border-white/10 hover:text-white/70"
-                  )}
-                  title={proactiveAlertsEnabled ? "Proactive 911 & Crime Radar Verbal Alerts Enabled" : "Proactive 911 Verbal Alerts Paused"}
+                  onClick={() => runProactiveHazardBriefing()}
+                  disabled={isScanningRadar}
+                  className="px-2 py-0.5 rounded-full border flex items-center gap-1 text-[8.5px] font-mono tracking-wide transition-all cursor-pointer shrink-0 bg-rose-500/20 text-rose-300 border-rose-400/50 hover:bg-rose-500/30"
+                  title="Speak Waze, 911 Dispatch & Crime Radar on Request"
                 >
-                  <Siren size={10} className={proactiveAlertsEnabled ? "text-rose-400 animate-pulse" : "text-white/40"} />
-                  <span>911 Live</span>
+                  <Siren size={10} className={isScanningRadar ? "animate-spin text-rose-400" : "text-rose-400"} />
+                  <span>{isScanningRadar ? 'Scanning Radar...' : 'Radar On Request'}</span>
                 </button>
 
                 <button
@@ -1667,15 +1596,13 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
                   <span>Search Grounded</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={cycleVoice}
-                  className="px-2 py-0.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 flex items-center gap-1 text-[8.5px] font-mono tracking-wide transition-all cursor-pointer shrink-0"
-                  title={`Gemini Live Natural Voice: ${liveVoice === 'Kore' ? 'Eclipse (Kore)' : liveVoice} (Tap to change)`}
+                <div
+                  className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center gap-1 text-[8.5px] font-mono tracking-wide shrink-0"
+                  title="Gemini Live Natural Voice: Eclipse (Kore) exclusively"
                 >
                   <Sparkles size={10} className="text-emerald-400" />
-                  <span>{liveVoice === 'Kore' ? 'Eclipse Voice' : liveVoice}</span>
-                </button>
+                  <span>Eclipse Voice</span>
+                </div>
               </div>
             </div>
 
@@ -1684,7 +1611,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
               <div className="px-3 py-1.5 bg-black/50 border-b border-white/5 flex items-center justify-between text-[9px] font-mono shrink-0">
                 <span className="flex items-center gap-1.5 text-emerald-400 truncate">
                   <BrainCircuit size={11} className="shrink-0 text-emerald-400" />
-                  <span className="truncate">Hands-Free: "Hey, DriveLogic" • 911 & Crime Radar</span>
+                  <span className="truncate">Hands-Free: "Hey, DriveLogic" • Radar Spoken on Request</span>
                 </span>
                 <div className="flex items-center gap-2 shrink-0">
                   <button
