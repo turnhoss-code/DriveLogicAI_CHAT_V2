@@ -124,8 +124,8 @@ export const ActiveTripMapOverlay: React.FC<ActiveTripMapOverlayProps> = ({
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
-  // Dynamic destination handling (defaults to navigation.to or JFK Airport, NY)
-  const defaultDest = navigation?.to || 'JFK Airport, NY';
+  // Dynamic destination handling (defaults to navigation.to or Binghamton, NY)
+  const defaultDest = navigation?.to || 'Binghamton, NY';
   const [selectedDestination, setSelectedDestination] = useState<string>(defaultDest);
   const [customDestInput, setCustomDestInput] = useState<string>(defaultDest);
   const [isEditingDest, setIsEditingDest] = useState(false);
@@ -661,7 +661,7 @@ export const ActiveTripMapOverlay: React.FC<ActiveTripMapOverlayProps> = ({
                     </button>
                   </div>
                   <div className="flex flex-wrap gap-1">
-                    {['JFK Airport', 'Manhattan, NYC', 'Albany, NY', 'Buffalo, NY'].map(preset => (
+                    {['Binghamton, NY', 'Vestal, NY', 'Johnson City, NY', 'Syracuse, NY'].map(preset => (
                       <button
                         key={preset}
                         type="button"

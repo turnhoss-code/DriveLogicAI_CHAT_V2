@@ -642,7 +642,7 @@ export default function TripTimelineDetails({
                 <GoogleMap
                   mapContainerStyle={{ width: '100%', height: '100%' }}
                   zoom={13}
-                  center={trip.waypoints[0] || { lat: 40.7128, lng: -74.0060 }}
+                  center={trip.waypoints[0] || { lat: 42.0987, lng: -75.9180 }}
                   options={{
                     disableDefaultUI: true,
                     styles: [

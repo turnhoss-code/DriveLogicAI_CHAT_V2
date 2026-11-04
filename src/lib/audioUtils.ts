@@ -16,6 +16,34 @@ export function pcmToBase64(pcmData: Float32Array): string {
 
 let nextStartTime = 0;
 let scheduledSources: AudioBufferSourceNode[] = [];
+const registeredContexts = new Set<AudioContext>();
+let unlockListenersInstalled = false;
+
+function ensureAutoplayUnlockListeners(audioCtx: AudioContext) {
+  registeredContexts.add(audioCtx);
+  if (unlockListenersInstalled || typeof window === 'undefined') return;
+  unlockListenersInstalled = true;
+
+  const unlockAll = () => {
+    let allRunning = true;
+    registeredContexts.forEach((ctx) => {
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+        allRunning = false;
+      }
+    });
+    if (allRunning && registeredContexts.size > 0) {
+      ['click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'keydown'].forEach((evt) => {
+        window.removeEventListener(evt, unlockAll, true);
+      });
+      unlockListenersInstalled = false;
+    }
+  };
+
+  ['click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'keydown'].forEach((evt) => {
+    window.addEventListener(evt, unlockAll, { capture: true, passive: true });
+  });
+}
 
 export function playAudioChunk(
   audioCtx: AudioContext,
@@ -23,6 +51,7 @@ export function playAudioChunk(
   destination: AudioNode = audioCtx.destination,
   onComplete?: () => void
 ): number {
+  ensureAutoplayUnlockListeners(audioCtx);
   if (audioCtx.state === 'suspended') {
     audioCtx.resume().catch(() => {});
   }
@@ -139,8 +168,9 @@ export async function speakWithEclipseTTS(
     if (res.ok) {
       const data = await res.json();
       if (data?.audio && audioCtx) {
+        ensureAutoplayUnlockListeners(audioCtx);
         if (audioCtx.state === 'suspended') {
-          await audioCtx.resume().catch(() => {});
+          audioCtx.resume().catch(() => {});
         }
         playAudioChunk(audioCtx, data.audio, destination || audioCtx.destination, onEnd);
         return true;

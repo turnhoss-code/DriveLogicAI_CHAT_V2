@@ -752,11 +752,13 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
       };
 
       ws.onerror = () => {
+        if (wsRef.current !== ws) return;
         setIsLive(false);
         setActiveSpeechState('idle');
       };
 
       ws.onclose = () => {
+        if (wsRef.current !== ws) return;
         setIsLive(false);
         setActiveSpeechState('idle');
       };
@@ -797,7 +799,8 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
       processor.connect(inputAudioCtx.destination);
 
       processor.onaudioprocess = (e) => {
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        // Stream raw PCM audio when SpeechRecognition is not handling discrete search-grounded turns
+        if (!speechRecRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           const base64 = pcmToBase64(e.inputBuffer.getChannelData(0));
           wsRef.current.send(JSON.stringify({ audio: base64 }));
         }
@@ -1032,26 +1035,76 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
     }
   };
 
-  // Speak DriveLogic greeting helper using Eclipse Neural Female Voice (Kore)
-  const speakGreeting = useCallback((appendTranscript = false) => {
+  // Speak DriveLogic greeting helper using Gemini 3.8 Flash + Eclipse Neural Female Voice (Kore)
+  const speakGreeting = useCallback(async (appendTranscript = false) => {
+    let greetingText = DRIVE_LOGIC_GREETING;
+    let preRenderedAudio: string | null = null;
+
+    try {
+      let customApiKey: string | undefined;
+      try {
+        const storedKey = localStorage.getItem('ztcd_gemini_api_key');
+        if (storedKey && storedKey.trim()) customApiKey = storedKey.trim();
+      } catch {}
+
+      const res = await fetch('/api/v1/startup-greeting', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(customApiKey ? { 'x-gemini-api-key': customApiKey } : {}),
+        },
+        body: JSON.stringify({ vehicleModel: vehicleModelRef.current }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.text && String(data.text).trim()) {
+          greetingText = String(data.text).trim();
+        }
+        if (data?.audio) {
+          preRenderedAudio = data.audio;
+        }
+      }
+    } catch {
+      // Fallback to default greeting text if network request fails
+    }
+
     if (appendTranscript) {
       setLiveTranscript(prev => {
         const last = prev[prev.length - 1];
-        if (last && last.text === DRIVE_LOGIC_GREETING) return prev;
-        return [...prev, { id: Math.random().toString(), sender: 'ai', text: DRIVE_LOGIC_GREETING, timestamp: Date.now() }];
+        if (last && last.text === greetingText) return prev;
+        return [...prev, { id: Math.random().toString(), sender: 'ai', text: greetingText, timestamp: Date.now() }];
+      });
+    } else {
+      // Ensure startup greeting is visible at the top of the transcript
+      setLiveTranscript(prev => {
+        if (prev.length === 0) {
+          return [{ id: 'init-greeting', sender: 'ai', text: greetingText, timestamp: Date.now() }];
+        }
+        return prev;
       });
     }
+
     if (voiceVolume !== 'mute' && typeof window !== 'undefined') {
       try {
         setActiveSpeechState('speaking');
         ensureOutputAudio();
-        if (outputAudioCtxRef.current && outputAnalyserRef.current) {
-          speakWithEclipseTTS(
-            DRIVE_LOGIC_GREETING,
+        if (preRenderedAudio && outputAudioCtxRef.current && outputAnalyserRef.current) {
+          playAudioChunk(
+            outputAudioCtxRef.current,
+            preRenderedAudio,
+            outputAnalyserRef.current,
+            () => setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle')
+          );
+        } else if (outputAudioCtxRef.current && outputAnalyserRef.current) {
+          await speakWithEclipseTTS(
+            greetingText,
             outputAudioCtxRef.current,
             outputAnalyserRef.current,
             () => setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle')
           );
+        } else {
+          setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle');
         }
       } catch {
         setActiveSpeechState(isMicActiveRef.current ? 'listening' : 'idle');
@@ -1059,18 +1112,24 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
     }
   }, [voiceVolume]);
 
-  // Automatically speak "Hi, I'm DriveLogic. How can I assist you?" as soon as the app loads
+  // Automatically speak "Hi, I'm DriveLogic. How can I assist you?" via Gemini 3.8 Flash + Eclipse voice as soon as the app loads
   useEffect(() => {
     if (hasSpokenInitialGreetingRef.current) return;
-    hasSpokenInitialGreetingRef.current = true;
 
     const timer = setTimeout(() => {
+      if (hasSpokenInitialGreetingRef.current) return;
+      hasSpokenInitialGreetingRef.current = true;
       speakGreeting(false);
-    }, 600);
+    }, 350);
 
     // Also attach a one-time gesture listener in case browser autoplay policy deferred AudioContext
     const unlockAndSpeak = () => {
       ensureOutputAudio();
+      if (!hasSpokenInitialGreetingRef.current) {
+        hasSpokenInitialGreetingRef.current = true;
+        clearTimeout(timer);
+        speakGreeting(false);
+      }
       window.removeEventListener('pointerdown', unlockAndSpeak);
       window.removeEventListener('keydown', unlockAndSpeak);
     };
@@ -1181,7 +1240,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
         targetLocation ||
         navigationRef.current?.to ||
         navigationRef.current?.from ||
-        'Albany, NY';
+        'Binghamton, NY';
 
       try {
         ensureOutputAudio();
@@ -1226,8 +1285,8 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
         const priorTripsSummary = formatPriorTripsSummary(tripsRef.current || []);
         const harshEventsSummary = formatHarshEventsSummary(tripsRef.current || []);
 
-        let lat = 42.6526;
-        let lng = -73.7562;
+        let lat = 42.0987;
+        let lng = -75.9180;
         if (typeof navigator !== 'undefined' && navigator.geolocation) {
           try {
             const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
@@ -1240,7 +1299,7 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
             lat = pos.coords.latitude;
             lng = pos.coords.longitude;
           } catch {
-            // Use default NY corridor coordinates if geolocation times out
+            // Use default Binghamton, NY coordinates if geolocation times out
           }
         }
 
@@ -1357,10 +1416,10 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
     connectLiveSession();
     return () => {
       stopMic();
-      resetAudioPlayback();
       if (wsRef.current) {
-        wsRef.current.close();
+        const currentWs = wsRef.current;
         wsRef.current = null;
+        currentWs.close();
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1812,11 +1871,11 @@ const LiveChatAssistant = forwardRef<LiveChatAssistantHandle, LiveChatAssistantP
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleSendText("Open 3D Digital Twin Studio and enable X-Ray mode")}
+                  onClick={() => handleSendText("Optimize low-damage route in Binghamton, NY")}
                   className="whitespace-nowrap px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/40 text-[9px] font-medium text-cyan-300 hover:text-white transition-all flex items-center gap-1 cursor-pointer shrink-0"
                 >
                   <Compass size={10} className="text-cyan-400" />
-                  <span>3D X-Ray View</span>
+                  <span>Binghamton Route</span>
                 </button>
                 <button
                   type="button"

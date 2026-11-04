@@ -205,22 +205,16 @@ function isQuotaOrBillingError(err: any): boolean {
   );
 }
 
-function markKeyIfExhausted(apiKey: string | undefined, err: any) {
-  if (! isQuotaOrBillingError(err)) return;
-  const effectiveKey = (apiKey && apiKey.trim()) || process.env.GEMINI_API_KEY;
-  if (effectiveKey) {
-    // Cool down exhausted key for 10 minutes so subsequent requests use instant live scrapers & browser neural voice without 402 errors
-    exhaustedApiKeys.set(effectiveKey, Date.now() + 10 * 60 * 1000);
-  }
+function getAllCandidateKeys(customApiKey?: string): string[] {
+  const rawKeys = [
+    customApiKey?.trim(),
+    process.env.BACKUP_GEMINI__CHAT_KEY?.trim(),
+    process.env.GEMINI_API_KEY?.trim(),
+  ].filter((k): k is string => Boolean(k && k.length > 5));
+  return Array.from(new Set(rawKeys));
 }
 
-function getGenAI(customApiKey?: string): GoogleGenAI | null {
-  const apiKey = (customApiKey && customApiKey.trim()) || process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  const cooldownUntil = exhaustedApiKeys.get(apiKey);
-  if (cooldownUntil && Date.now() < cooldownUntil) {
-    return null;
-  }
+function createGenAIForKey(apiKey: string): GoogleGenAI {
   const instance = new GoogleGenAI({
     apiKey,
     httpOptions: {
@@ -231,6 +225,91 @@ function getGenAI(customApiKey?: string): GoogleGenAI | null {
   });
   (instance as any).__apiKey = apiKey;
   return instance;
+}
+
+function markKeyIfExhausted(apiKey: string | undefined, err: any) {
+  if (!isQuotaOrBillingError(err)) return;
+  const effectiveKey = (apiKey && apiKey.trim()) || process.env.GEMINI_API_KEY;
+  if (effectiveKey) {
+    // Short 25-second cooldown per key so temporary rate-limits fail over to backup key without blocking TTS or startup greetings
+    exhaustedApiKeys.set(effectiveKey, Date.now() + 25 * 1000);
+  }
+}
+
+function getGenAI(customApiKey?: string): GoogleGenAI | null {
+  const keys = getAllCandidateKeys(customApiKey);
+  if (keys.length === 0) return null;
+
+  // Prefer the first candidate key that is not currently in a rate-limit cooldown
+  for (const key of keys) {
+    const cooldownUntil = exhaustedApiKeys.get(key);
+    if (!cooldownUntil || Date.now() >= cooldownUntil) {
+      return createGenAIForKey(key);
+    }
+  }
+
+  // Never return null if at least one key exists (TTS and Live API have independent quotas)
+  return createGenAIForKey(keys[0]);
+}
+
+async function generateContentWithFailover(customApiKey: string | undefined, params: any): Promise<any> {
+  const keys = getAllCandidateKeys(customApiKey);
+  if (keys.length === 0) {
+    throw new Error('No Gemini API key configured');
+  }
+
+  // Sort non-cooled-down keys first
+  const orderedKeys = [
+    ...keys.filter(k => {
+      const cd = exhaustedApiKeys.get(k);
+      return !cd || Date.now() >= cd;
+    }),
+    ...keys.filter(k => {
+      const cd = exhaustedApiKeys.get(k);
+      return Boolean(cd && Date.now() < cd);
+    }),
+  ];
+
+  let lastError: any = null;
+
+  // Pass 1: Try requested parameters (including googleSearch if specified) across all candidate keys
+  for (const key of orderedKeys) {
+    try {
+      const ai = createGenAIForKey(key);
+      return await ai.models.generateContent(params);
+    } catch (err: any) {
+      lastError = err;
+      markKeyIfExhausted(key, err);
+    }
+  }
+
+  // Pass 2: If googleSearch grounding hit a 429/503 quota limit, retry gemini-3.8-flash without googleSearch (keeping functionDeclarations)
+  const configuredTools = params?.config?.tools;
+  if (Array.isArray(configuredTools) && configuredTools.some((t: any) => t.googleSearch)) {
+    const toolsWithoutSearch = configuredTools.filter((t: any) => !t.googleSearch);
+    const fallbackConfig = { ...params.config };
+    if (toolsWithoutSearch.length > 0) {
+      fallbackConfig.tools = toolsWithoutSearch;
+    } else {
+      delete fallbackConfig.tools;
+      delete fallbackConfig.toolConfig;
+    }
+
+    for (const key of orderedKeys) {
+      try {
+        const ai = createGenAIForKey(key);
+        return await ai.models.generateContent({
+          ...params,
+          model: params.model || 'gemini-3.8-flash',
+          config: fallbackConfig,
+        });
+      } catch (err: any) {
+        lastError = err;
+      }
+    }
+  }
+
+  throw lastError || new Error('All Gemini API candidate keys failed');
 }
 
 const DRIVE_LOGIC_FUNCTION_DECLARATIONS = [
@@ -555,7 +634,9 @@ async function executeWebSearchForDiagnostic(
   }
 }
 
-async function generateEclipseVoiceAudio(ai: GoogleGenAI, text: string): Promise<string | null> {
+const ttsAudioCache = new Map<string, string>();
+
+async function generateEclipseVoiceAudio(ai: GoogleGenAI | null, text: string, customApiKey?: string): Promise<string | null> {
   const cleanText = String(text || '')
     .replace(/---[\s\S]*$/g, '')
     .replace(/[*#_`~]/g, '')
@@ -564,45 +645,66 @@ async function generateEclipseVoiceAudio(ai: GoogleGenAI, text: string): Promise
     .slice(0, 600);
   if (!cleanText) return null;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash-lite-tts",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: cleanText,
-              speechMetadata: {
-                style: "Warm, natural, expressive female co-pilot voice named Eclipse, conversational and friendly, never robotic",
-              },
-            } as any,
-          ],
-        },
-      ],
-      config: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: "Kore" },
+  const cached = ttsAudioCache.get(cleanText);
+  if (cached) return cached;
+
+  const candidateKeys = getAllCandidateKeys(customApiKey || (ai as any)?.__apiKey);
+  const clientsToTry: GoogleGenAI[] = [];
+  if (ai) clientsToTry.push(ai);
+  for (const k of candidateKeys) {
+    if (!ai || (ai as any).__apiKey !== k) {
+      clientsToTry.push(createGenAIForKey(k));
+    }
+  }
+
+  for (const client of clientsToTry) {
+    try {
+      const response = await client.models.generateContent({
+        model: "gemini-3.8-flash-lite-tts",
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: cleanText,
+                speechMetadata: {
+                  style: "Warm, natural, expressive female co-pilot voice named Eclipse, conversational and friendly, never robotic",
+                },
+              } as any,
+            ],
+          },
+        ],
+        config: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: "Kore" },
+            },
           },
         },
-      },
-    });
+      });
 
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (!base64Audio) return null;
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (!base64Audio) continue;
 
-    const buf = Buffer.from(base64Audio, "base64");
-    const pcmBuf =
-      buf.length > 44 && buf.toString("ascii", 0, 4) === "RIFF"
-        ? buf.subarray(44)
-        : buf;
-    return pcmBuf.toString("base64");
-  } catch (err: any) {
-    markKeyIfExhausted((ai as any)?.__apiKey, err);
-    return null;
+      const buf = Buffer.from(base64Audio, "base64");
+      const pcmBuf =
+        buf.length > 44 && buf.toString("ascii", 0, 4) === "RIFF"
+          ? buf.subarray(44)
+          : buf;
+      const pcmBase64 = pcmBuf.toString("base64");
+      if (ttsAudioCache.size > 100) {
+        const firstKey = ttsAudioCache.keys().next().value;
+        if (firstKey) ttsAudioCache.delete(firstKey);
+      }
+      ttsAudioCache.set(cleanText, pcmBase64);
+      return pcmBase64;
+    } catch (err: any) {
+      // Try next candidate key
+    }
   }
+
+  return null;
 }
 
 function handleAutomotiveCommandFallback(text: string, contextData: any) {
@@ -637,14 +739,14 @@ function handleAutomotiveCommandFallback(text: string, contextData: any) {
   if (lower.includes('best route') || lower.includes('recommend route') || lower.includes('route optimization') || lower.includes('optimize route') || lower.includes('which route')) {
     return {
       text: "Based on historical trip logs and road vibration scores, I've selected the lowest-damage corridor.",
-      functionCalls: [{ name: 'optimizeRoute', args: { origin: 'Current Location', destination: 'JFK Airport, NY' } }]
+      functionCalls: [{ name: 'optimizeRoute', args: { origin: 'Binghamton, NY', destination: 'Vestal, NY' } }]
     };
   }
   if (lower.includes('navigate to ')) {
-    const dest = text.replace(/.*navigate to\s+/i, '').trim() || 'Albany, NY';
+    const dest = text.replace(/.*navigate to\s+/i, '').trim() || 'Binghamton, NY';
     return {
       text: `Setting GPS navigation route to ${dest}.`,
-      functionCalls: [{ name: 'setNavigation', args: { from: 'Current Location', to: dest, gpsActive: true, mapExpanded: true } }]
+      functionCalls: [{ name: 'setNavigation', args: { from: 'Binghamton, NY', to: dest, gpsActive: true, mapExpanded: true } }]
     };
   }
   if (lower.includes('expand map') || lower.includes('open map')) {
@@ -760,15 +862,60 @@ async function startServer() {
       return res.status(400).json({ error: "Missing text" });
     }
     const ai = getGenAI(customApiKey);
-    if (!ai) {
-      return res.status(200).json({ audio: null, fallback: true, voice: "Eclipse (Kore)" });
-    }
-    const pcmBase64 = await generateEclipseVoiceAudio(ai, String(text));
+    const pcmBase64 = await generateEclipseVoiceAudio(ai, String(text), customApiKey);
     if (!pcmBase64) {
       return res.status(200).json({ audio: null, fallback: true, voice: "Eclipse (Kore)" });
     }
     res.json({ audio: pcmBase64, voice: "Eclipse (Kore)" });
   });
+
+  // Startup Greeting Endpoint powered by Gemini 3.8 Flash + Eclipse (Kore) Natural Voice
+  const DEFAULT_STARTUP_GREETING = "Hi, I'm DriveLogic. How can I assist you?";
+  app.post("/api/v1/startup-greeting", async (req, res) => {
+    const customApiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
+    let greetingText = DEFAULT_STARTUP_GREETING;
+
+    try {
+      const resp = await generateContentWithFailover(customApiKey, {
+        model: "gemini-3.8-flash",
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: "Greet the driver on start-up with your exact signature greeting: \"Hi, I'm DriveLogic. How can I assist you?\""
+              }
+            ]
+          }
+        ],
+        config: {
+          systemInstruction: "You are DriveLogic (speaking with the natural female voice Eclipse). Output only your concise signature greeting: Hi, I'm DriveLogic. How can I assist you?"
+        }
+      });
+      if (resp?.text && resp.text.trim()) {
+        greetingText = resp.text.trim().replace(/^["']|["']$/g, '');
+      }
+    } catch {
+      greetingText = DEFAULT_STARTUP_GREETING;
+    }
+
+    const ai = getGenAI(customApiKey);
+    const audioBase64 = await generateEclipseVoiceAudio(ai, greetingText, customApiKey);
+    res.json({
+      text: greetingText,
+      audio: audioBase64,
+      voice: "Eclipse (Kore)",
+      model: "gemini-3.8-flash"
+    });
+  });
+
+  // Pre-warm the startup greeting audio cache on server boot so startup response is instantaneous
+  setTimeout(() => {
+    const bootAi = getGenAI();
+    if (bootAi) {
+      generateEclipseVoiceAudio(bootAi, DEFAULT_STARTUP_GREETING).catch(() => {});
+    }
+  }, 150);
 
   app.post("/api/v1/cmd", async (req, res) => {
     const customApiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
@@ -819,9 +966,10 @@ async function startServer() {
 
       const systemInstruction = `You are DriveLogic (speaking with the natural, warm, human female voice "Eclipse"), an intelligent hands-free general assistant, automotive diagnostic specialist, and voice controller for every feature in the DriveLogic app.
 MANDATORY OPERATING RULES:
-1. ALWAYS search the web using Google Search and gather as much prudent, verified info as possible when diagnosing vehicles (OBD-II codes, TSBs, recalls, symptoms, repair procedures) or answering general knowledge, weather, news, traffic, or driving questions.
-2. KEEP your responses short, natural, warm, and concise (1-3 conversational sentences) so they sound natural when spoken aloud while driving.
-3. You are BOTH a general assistant (able to answer any general question, calculation, local info, or advice) AND the complete hands-free voice controller for the app. Whenever the user asks to switch tabs, open/close settings, connect ELM327 BLE/USB, run diagnostics, start/stop trip recording, toggle simulation, log a pothole/damage point, set navigation, expand/minimize the map, filter road hazards, control the 3D Digital Twin Studio, manage maintenance tasks, or back up to Google Drive, ALWAYS invoke the matching function declaration tool!`;
+1. ONLY speak Waze, 911 CAD dispatch, and Crime Radar data UPON REQUEST from the driver. Never volunteer unsolicited Waze or Crime Radar alerts.
+2. ALWAYS search the web using Google Search and gather as much prudent, verified info as possible when diagnosing vehicles (OBD-II codes, TSBs, recalls, symptoms, repair procedures) or answering general knowledge, weather, news, traffic, or driving questions.
+3. KEEP your responses short, natural, warm, and concise (1-3 conversational sentences) so they sound natural when spoken aloud while driving.
+4. You are BOTH a general assistant (able to answer any general question, calculation, local info, or advice) AND the complete hands-free voice controller for the app. Whenever the user asks to switch tabs, open/close settings, connect ELM327 BLE/USB, run diagnostics, start/stop trip recording, toggle simulation, log a pothole/damage point, set navigation, expand/minimize the map, filter road hazards, manage maintenance tasks, or back up to Google Drive, ALWAYS invoke the matching function declaration tool!`;
 
       const formattedHistory = Array.isArray(history)
         ? history.map((msg: any) => ({
@@ -836,7 +984,7 @@ MANDATORY OPERATING RULES:
       let webSources: { title: string; uri: string; type?: 'web' | 'maps'; reviewSnippet?: string }[] = [];
 
       try {
-        const response = await ai.models.generateContent({
+        const response = await generateContentWithFailover(customApiKey, {
           model: selectedModel,
           contents: formattedHistory,
           config: {
@@ -847,6 +995,11 @@ MANDATORY OPERATING RULES:
         });
         responseText = response.text || '';
         functionCalls = response.functionCalls;
+
+        if (!responseText && functionCalls && functionCalls.length > 0) {
+          const names = functionCalls.map((fc: any) => fc.name).join(', ');
+          responseText = `Done! I've executed ${names} for you.`;
+        }
 
         const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks as any[];
         if (Array.isArray(groundingChunks)) {
@@ -866,18 +1019,19 @@ MANDATORY OPERATING RULES:
           }
         }
       } catch (geminiError: any) {
-        markKeyIfExhausted(customApiKey, geminiError);
         const fallback = handleAutomotiveCommandFallback(text, contextData);
         responseText = fallback.text;
         functionCalls = fallback.functionCalls;
       }
 
       const activeAi = getGenAI(customApiKey);
-      const audioBase64 = responseText && activeAi ? await generateEclipseVoiceAudio(activeAi, responseText) : null;
+      const audioBase64 = responseText ? await generateEclipseVoiceAudio(activeAi, responseText, customApiKey) : null;
       res.json({ text: responseText, functionCalls, sources: webSources, audio: audioBase64, model: selectedModel, role: activeRole });
     } catch (e: any) {
       const fallback = handleAutomotiveCommandFallback(text, contextData);
-      res.json({ ...fallback, model: selectedModel, role: activeRole });
+      const activeAi = getGenAI(customApiKey);
+      const audioBase64 = fallback.text ? await generateEclipseVoiceAudio(activeAi, fallback.text, customApiKey) : null;
+      res.json({ ...fallback, audio: audioBase64, model: selectedModel, role: activeRole });
     }
   });
 
@@ -1254,7 +1408,7 @@ Recommend the best route strategy and explain why briefly in under 150 words. Fo
   const handleMultiSourceHazardAnd911Scan = async (req: express.Request, res: express.Response) => {
     const customApiKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
     const {
-      location = "Albany, NY",
+      location = "Binghamton, NY",
       corridor,
       lat,
       lng,
@@ -1265,8 +1419,8 @@ Recommend the best route strategy and explain why briefly in under 150 words. Fo
       includeAudio = false
     } = req.body || {};
 
-    const baseLat = typeof lat === 'number' && !isNaN(lat) ? lat : 42.6526;
-    const baseLng = typeof lng === 'number' && !isNaN(lng) ? lng : -73.7562;
+    const baseLat = typeof lat === 'number' && !isNaN(lat) ? lat : 42.0987;
+    const baseLng = typeof lng === 'number' && !isNaN(lng) ? lng : -75.9180;
 
     const { liveWeather, nwsAlerts } = await scrapeLiveWeatherAndEmergencyFeeds(baseLat, baseLng);
 
@@ -1279,14 +1433,14 @@ Recommend the best route strategy and explain why briefly in under 150 words. Fo
         id: "hazard-911-1",
         type: "dispatch_911",
         title: "911 CAD Dispatch: Multi-Unit Emergency Response",
-        location: `${corridor || 'I-90 NYS Thruway'} Exit 24 Ramp & Washington Ave Ext`,
-        coordinates: { lat: baseLat - 0.018, lng: baseLng + 0.024 },
+        location: `${corridor || 'I-81 / NY-17'} Kamikaze Curve & Exit 4S Ramp (Binghamton)`,
+        coordinates: { lat: baseLat + 0.012, lng: baseLng + 0.008 },
         severity: "critical",
-        description: "Active 911 CAD call (10-50 Personal Injury / Roadway Hazard). Police, Fire Rescue Engine 4, and EMS on scene; right two lanes restricted.",
+        description: "Active Broome County 911 CAD call (10-50 Personal Injury / Roadway Hazard). Police, Binghamton Fire Rescue, and EMS on scene; right lane restricted.",
         source: "911 CAD Dispatch • PulsePoint Live",
         timestamp: "2 min ago",
         reportedDelayMinutes: 14,
-        direction: "EB",
+        direction: "SB",
         verifiedCount: 19,
         callCode: "911-CAD #4918 (10-50 PI)"
       },
@@ -1294,8 +1448,8 @@ Recommend the best route strategy and explain why briefly in under 150 words. Fo
         id: "hazard-cr-1",
         type: "crime_radar",
         title: "Crime Radar Alert: Police Perimeter & Traffic Stop Activity",
-        location: `${corridor || 'Central Ave & Wolf Rd'} Corridor`,
-        coordinates: { lat: baseLat + 0.031, lng: baseLng - 0.029 },
+        location: `${corridor || 'Vestal Pkwy E (NY-434) & Main St'} Corridor`,
+        coordinates: { lat: baseLat - 0.009, lng: baseLng - 0.032 },
         severity: "high",
         description: "Scraped from Crime Radar & Citizen safety feeds: Multiple patrol units on scene for active law enforcement activity. Expect slowdowns and shoulder closures.",
         source: "Crime Radar App • Citizen Feed",
@@ -1309,14 +1463,14 @@ Recommend the best route strategy and explain why briefly in under 150 words. Fo
         id: "hazard-st-1",
         type: "speed_trap",
         title: "Reported Police Radar / Speed Trap",
-        location: `${corridor || 'I-87 Northway'} near Exit 9 NB (Clifton Park)`,
-        coordinates: { lat: baseLat + 0.08, lng: baseLng - 0.02 },
+        location: `${corridor || 'NY-17 (Future I-86)'} near Exit 70N WB (Johnson City)`,
+        coordinates: { lat: baseLat + 0.018, lng: baseLng - 0.041 },
         severity: "moderate",
-        description: "State Police cruiser running stationary Ka-band radar in grass median. Multiple Waze user confirmations.",
+        description: "State Police cruiser running stationary Ka-band radar in center median. Multiple Waze user confirmations.",
         source: "Waze Community Alert",
         timestamp: "6 min ago",
         reportedDelayMinutes: 0,
-        direction: "NB",
+        direction: "WB",
         verifiedCount: 14,
         callCode: "WAZE-POLICE"
       },
@@ -1324,14 +1478,14 @@ Recommend the best route strategy and explain why briefly in under 150 words. Fo
         id: "hazard-pt-1",
         type: "prior_trip_damage",
         title: "Prior Trip Log: Severe Pothole & Chassis Vibration Cluster",
-        location: `${corridor || 'I-787 SB'} Expansion Joint near Bridge Approach`,
-        coordinates: { lat: baseLat - 0.011, lng: baseLng + 0.014 },
+        location: `${corridor || 'Court St & Memorial Bridge'} Expansion Joint (Binghamton)`,
+        coordinates: { lat: baseLat - 0.003, lng: baseLng + 0.004 },
         severity: "high",
         description: "Logged from your prior trip accelerometer vibration data (2.1G peak vertical shock). Slow down and favor left lane to protect suspension and rims.",
         source: "DriveLogic Prior Trip Accelerometer Log",
         timestamp: "Prior Trip Memory",
         reportedDelayMinutes: 0,
-        direction: "SB",
+        direction: "WB",
         verifiedCount: 6,
         callCode: "TRIP-VIB-2.1G"
       },
@@ -1339,14 +1493,14 @@ Recommend the best route strategy and explain why briefly in under 150 words. Fo
         id: "hazard-acc-1",
         type: "accident",
         title: "Multi-Vehicle Collision",
-        location: `${corridor || 'I-90 NYS Thruway'} Exit 24 EB Toll Plaza`,
-        coordinates: { lat: baseLat - 0.03, lng: baseLng + 0.04 },
+        location: `${corridor || 'I-81 NB'} near Exit 5 (Front St / Dickinson)`,
+        coordinates: { lat: baseLat + 0.024, lng: baseLng - 0.004 },
         severity: "high",
         description: "Two-car incident blocking the right lane and shoulder. NY State Police and tow truck on scene.",
         source: "511NY Incident Feed",
         timestamp: "11 min ago",
         reportedDelayMinutes: 16,
-        direction: "EB",
+        direction: "NB",
         verifiedCount: 15,
         callCode: "511NY-INC"
       },
@@ -1395,10 +1549,10 @@ Recommend the best route strategy and explain why briefly in under 150 words. Fo
     const hasPriorTripNotes = Boolean(priorTripsSummary && !priorTripsSummary.includes('No prior recorded trips'));
     const hasPriorChatNotes = Boolean(priorChatsSummary && !priorChatsSummary.includes('No prior chat history'));
 
-    const defaultVerbalAlert = `Heads up from DriveLogic: Live 911 CAD dispatch and Crime Radar report an active emergency response near ${location} at I-90 Exit 24 with a 14-minute delay, plus police activity on Central Avenue and a Waze speed trap on I-87. ${hasPriorTripNotes ? 'Your prior trip vibration logs also flag a 2.1G pothole impact zone ahead on the bridge approach. ' : 'Your prior trip vibration logs flag a severe pothole zone ahead. '}${hasPriorChatNotes ? 'Keeping an eye on your previously discussed vehicle diagnostics, ' : ''}current ${liveWeather.tempF}°F ${liveWeather.condition.toLowerCase()} conditions mean ${liveWeather.roadSurface.toLowerCase()}.`;
+    const defaultVerbalAlert = `Heads up from DriveLogic: Live 911 CAD dispatch and Crime Radar report an active emergency response near ${location} at I-81 / NY-17 Exit 4S with a 14-minute delay, plus police activity on Vestal Parkway and a Waze speed trap near Exit 70N. ${hasPriorTripNotes ? 'Your prior trip vibration logs also flag a 2.1G pothole impact zone ahead on the Court Street bridge approach. ' : 'Your prior trip vibration logs flag a severe pothole zone ahead. '}${hasPriorChatNotes ? 'Keeping an eye on your previously discussed vehicle diagnostics, ' : ''}current ${liveWeather.tempF}°F ${liveWeather.condition.toLowerCase()} conditions mean ${liveWeather.roadSurface.toLowerCase()}.`;
 
     const fallbackResponse: any = {
-      summary: `Multi-source 911 & hazard radar for ${location}: 1 active 911 CAD emergency call, 1 Crime Radar police alert, 1 Waze speed trap, 1 collision on I-90, 1 prior-trip pothole vibration hotspot, and ${liveWeather.condition} (${liveWeather.tempF}°F).`,
+      summary: `Multi-source 911 & hazard radar for ${location}: 1 active 911 CAD emergency call, 1 Crime Radar police alert, 1 Waze speed trap, 1 collision on I-81, 1 prior-trip pothole vibration hotspot, and ${liveWeather.condition} (${liveWeather.tempF}°F).`,
       verbalAlert: defaultVerbalAlert,
       location,
       hazards: fallbackHazards,
@@ -1461,7 +1615,7 @@ CRITICAL: Return ONLY valid raw JSON within a \`\`\`json ... \`\`\` code fence w
 }
 Include 6 to 7 distinct hazards covering at least: 1 'dispatch_911' (911 call), 1 'crime_radar' (Crime Radar app alert), 1 'prior_trip_damage' (from prior trip vibration logs), 1 'speed_trap' (Waze), 1 'accident' or 'emergency_vehicle', 1 'roadwork', and 1 'weather_hazard'.`;
 
-      const response = await ai.models.generateContent({
+      const response = await generateContentWithFailover(customApiKey, {
         model: "gemini-3.8-flash",
         contents: prompt,
         config: {
@@ -1505,7 +1659,7 @@ Include 6 to 7 distinct hazards covering at least: 1 'dispatch_911' (911 call), 
       const finalVerbalAlert = parsedData?.verbalAlert || defaultVerbalAlert;
       let audioBase64: string | null = null;
       if (includeAudio && finalVerbalAlert) {
-        audioBase64 = await generateEclipseVoiceAudio(ai, finalVerbalAlert);
+        audioBase64 = await generateEclipseVoiceAudio(ai, finalVerbalAlert, customApiKey);
       }
 
       if (parsedData && Array.isArray(parsedData.hazards) && parsedData.hazards.length > 0) {
@@ -1538,8 +1692,15 @@ Include 6 to 7 distinct hazards covering at least: 1 'dispatch_911' (911 call), 
         });
       }
     } catch (e: any) {
-      markKeyIfExhausted(customApiKey, e);
-      res.json(fallbackResponse);
+      let audioBase64: string | null = null;
+      if (includeAudio) {
+        const ai = getGenAI(customApiKey);
+        audioBase64 = await generateEclipseVoiceAudio(ai, defaultVerbalAlert, customApiKey);
+      }
+      res.json({
+        ...fallbackResponse,
+        audio: audioBase64
+      });
     }
   };
 
@@ -1663,7 +1824,6 @@ Live Telemetry: ${telemetry}
 
     const handleFallbackChatResponse = async (text: string, allowSearch: boolean = true) => {
       const dynamicInstruction = buildSystemInstruction(clientInitData);
-      const ai = getGenAI(clientInitData?.apiKey);
       let responseText = "";
       let functionCalls: any = undefined;
       const webSources: { title: string; uri: string }[] = [];
@@ -1673,42 +1833,35 @@ Live Telemetry: ${telemetry}
         liveTools.push({ googleSearch: {} });
       }
 
-      if (ai) {
-        try {
-          const resp = await ai.models.generateContent({
-            model: "gemini-3.8-flash",
-            contents: [{ role: 'user', parts: [{ text }] }],
-            config: {
-              systemInstruction: dynamicInstruction,
-              tools: liveTools as any,
-              toolConfig: { includeServerSideToolInvocations: true }
-            }
-          });
-          responseText = resp.text || '';
-          functionCalls = resp.functionCalls;
-
-          if (!responseText && functionCalls && functionCalls.length > 0) {
-            const names = functionCalls.map((fc: any) => fc.name).join(', ');
-            responseText = `Done! I've executed ${names} for you.`;
+      try {
+        const resp = await generateContentWithFailover(clientInitData?.apiKey, {
+          model: "gemini-3.8-flash",
+          contents: [{ role: 'user', parts: [{ text }] }],
+          config: {
+            systemInstruction: dynamicInstruction,
+            tools: liveTools as any,
+            toolConfig: { includeServerSideToolInvocations: true }
           }
+        });
+        responseText = resp.text || '';
+        functionCalls = resp.functionCalls;
 
-          const groundingChunks = resp.candidates?.[0]?.groundingMetadata?.groundingChunks;
-          if (Array.isArray(groundingChunks)) {
-            const seenUris = new Set<string>();
-            for (const chunk of groundingChunks) {
-              if (chunk?.web?.uri && !seenUris.has(chunk.web.uri)) {
-                seenUris.add(chunk.web.uri);
-                webSources.push({ title: chunk.web.title || new URL(chunk.web.uri).hostname, uri: chunk.web.uri });
-              }
-            }
-          }
-        } catch (e: any) {
-          markKeyIfExhausted(clientInitData?.apiKey, e);
-          const fallback = handleAutomotiveCommandFallback(text, clientInitData?.telemetry);
-          responseText = fallback.text;
-          functionCalls = fallback.functionCalls;
+        if (!responseText && functionCalls && functionCalls.length > 0) {
+          const names = functionCalls.map((fc: any) => fc.name).join(', ');
+          responseText = `Done! I've executed ${names} for you.`;
         }
-      } else {
+
+        const groundingChunks = resp.candidates?.[0]?.groundingMetadata?.groundingChunks;
+        if (Array.isArray(groundingChunks)) {
+          const seenUris = new Set<string>();
+          for (const chunk of groundingChunks) {
+            if (chunk?.web?.uri && !seenUris.has(chunk.web.uri)) {
+              seenUris.add(chunk.web.uri);
+              webSources.push({ title: chunk.web.title || new URL(chunk.web.uri).hostname, uri: chunk.web.uri });
+            }
+          }
+        }
+      } catch (e: any) {
         const fallback = handleAutomotiveCommandFallback(text, clientInitData?.telemetry);
         responseText = fallback.text;
         functionCalls = fallback.functionCalls;
@@ -1721,11 +1874,9 @@ Live Telemetry: ${telemetry}
       if (responseText) {
         safeSend({ text: responseText, sources: webSources.length > 0 ? webSources : undefined });
         const ttsAi = getGenAI(clientInitData?.apiKey);
-        if (ttsAi) {
-          const pcmAudio = await generateEclipseVoiceAudio(ttsAi, responseText);
-          if (pcmAudio) {
-            safeSend({ audio: pcmAudio });
-          }
+        const pcmAudio = await generateEclipseVoiceAudio(ttsAi, responseText, clientInitData?.apiKey);
+        if (pcmAudio) {
+          safeSend({ audio: pcmAudio });
         }
       } else if (webSources.length > 0) {
         safeSend({ sources: webSources });
@@ -1775,14 +1926,22 @@ Live Telemetry: ${telemetry}
           },
           callbacks: {
             onmessage: async (message: LiveServerMessage) => {
-              turnHasReplied = true;
-              pendingTextForTurn = null;
-              if (pendingResponseTimeout) {
-                clearTimeout(pendingResponseTimeout);
-                pendingResponseTimeout = null;
+              const serverContent = message.serverContent as any;
+              const hasActualContent = Boolean(
+                serverContent?.modelTurn?.parts?.length ||
+                serverContent?.outputTranscription?.text ||
+                message.toolCall
+              );
+
+              if (hasActualContent) {
+                turnHasReplied = true;
+                pendingTextForTurn = null;
+                if (pendingResponseTimeout) {
+                  clearTimeout(pendingResponseTimeout);
+                  pendingResponseTimeout = null;
+                }
               }
 
-              const serverContent = message.serverContent as any;
               const parts = serverContent?.modelTurn?.parts;
               if (parts) {
                 for (const part of parts) {
@@ -1815,7 +1974,7 @@ Live Telemetry: ${telemetry}
               if (serverContent?.interrupted) {
                 safeSend({ interrupted: true });
               }
-              if (serverContent?.turnComplete) {
+              if (serverContent?.turnComplete && hasActualContent) {
                 safeSend({ turnComplete: true });
               }
 
@@ -1862,7 +2021,6 @@ Live Telemetry: ${telemetry}
               }
             },
             onerror: (liveErr: any) => {
-              markKeyIfExhausted(clientInitData?.apiKey, liveErr);
               session = null;
               if (pendingTextForTurn && !turnHasReplied) {
                 const textToProcess = pendingTextForTurn;
@@ -1906,7 +2064,6 @@ Live Telemetry: ${telemetry}
           handleClientMessage(item);
         }
       } catch (err: any) {
-        markKeyIfExhausted(clientInitData?.apiKey, err);
         session = null;
         safeSend({ ready: true, status: 'copilot-ready', note: 'Connected in high-speed DriveLogic mode', voice: 'Eclipse (Kore)' });
         while (messageQueue.length > 0) {
@@ -1944,24 +2101,13 @@ Live Telemetry: ${telemetry}
         }
 
         if (parsed.greet) {
-          if (session) {
-            try {
-              session.sendClientContent({
-                turns: [{ role: 'user', parts: [{ text: "Introduce yourself as DriveLogic with your signature greeting." }] }],
-                turnComplete: true
-              });
-              return;
-            } catch {
-              session = null;
-            }
-          }
+          const greetingText = "Hi, I'm DriveLogic. How can I assist you?";
           const ai = getGenAI(clientInitData?.apiKey);
-          if (ai) {
-            const pcmAudio = await generateEclipseVoiceAudio(ai, "Hi, I'm DriveLogic. How can I assist you?");
-            if (pcmAudio) {
-              safeSend({ audio: pcmAudio, turnComplete: true });
-              return;
-            }
+          const pcmAudio = await generateEclipseVoiceAudio(ai, greetingText, clientInitData?.apiKey);
+          if (pcmAudio) {
+            safeSend({ audio: pcmAudio, turnComplete: true });
+          } else {
+            safeSend({ text: greetingText, turnComplete: true });
           }
           return;
         }
@@ -1970,31 +2116,7 @@ Live Telemetry: ${telemetry}
           const currentText = String(parsed.text);
           const allowSearch = parsed.useSearch !== false;
 
-          // If Gemini Live session is connected, send turn to Live API for natural real-time voice response!
-          if (session) {
-            try {
-              turnHasReplied = false;
-              pendingTextForTurn = currentText;
-              session.sendClientContent({
-                turns: [{ role: 'user', parts: [{ text: currentText }] }],
-                turnComplete: true
-              });
-
-              // Safety timer: if Live session takes longer than 3.5s to respond, fallback cleanly
-              pendingResponseTimeout = setTimeout(() => {
-                if (!turnHasReplied && pendingTextForTurn) {
-                  const fallbackText = pendingTextForTurn;
-                  pendingTextForTurn = null;
-                  handleFallbackChatResponse(fallbackText, allowSearch);
-                }
-              }, 3500);
-              return;
-            } catch (liveSendErr) {
-              session = null;
-            }
-          }
-
-          // Fallback chat response with search grounding and Eclipse neural voice
+          // Process via Gemini 3.8 Flash + Google Search Grounding + Function Calling + Eclipse (Kore) 24kHz PCM voice
           await handleFallbackChatResponse(currentText, allowSearch);
         }
       } catch {

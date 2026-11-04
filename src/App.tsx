@@ -82,11 +82,11 @@ export default function App() {
     deviceName: 'ELM327 BLE Auto-Sense',
     protocolStatus: 'locked',
   });
-  const lastKnownCoordsRef = useRef<{ lat: number; lng: number }>({ lat: 34.0522, lng: -118.2437 });
+  const lastKnownCoordsRef = useRef<{ lat: number; lng: number }>({ lat: 42.0987, lng: -75.9180 });
   const gravityRef = useRef<{ x: number; y: number; z: number }>({ x: 0, y: 0, z: 9.81 });
   const lastDamageLogTimeRef = useRef<number>(0);
   const [navigation, setNavigation] = useState<NavigationState>({
-    from: '',
+    from: 'Binghamton, NY',
     to: '',
     isActive: true,
   });

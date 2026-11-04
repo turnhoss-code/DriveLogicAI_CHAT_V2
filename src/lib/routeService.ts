@@ -27,17 +27,23 @@ export interface RouteCalculationResult {
   endLocation?: LatLngPoint;
 }
 
-export const DEFAULT_NY_LOCATION: LatLngPoint = { lat: 40.7128, lng: -74.0060 }; // New York City, NY
+export const DEFAULT_NY_LOCATION: LatLngPoint = { lat: 42.0987, lng: -75.9180 }; // Binghamton, NY
 export const NY_CAPITAL_LOCATION: LatLngPoint = { lat: 42.6526, lng: -73.7562 }; // Albany, NY
 
 // Common city / landmark coordinates for robust fallback resolution (NY state primary)
 const KNOWN_LOCATIONS: Record<string, LatLngPoint> = {
   // New York State Primary Hubs & Cities
+  'binghamton': { lat: 42.0987, lng: -75.9180 },
+  'binghamton ny': { lat: 42.0987, lng: -75.9180 },
+  'binghamton, ny': { lat: 42.0987, lng: -75.9180 },
+  'vestal': { lat: 42.0851, lng: -76.0538 },
+  'johnson city': { lat: 42.1156, lng: -75.9588 },
+  'endicott': { lat: 42.0984, lng: -76.0494 },
   'new york': { lat: 40.7128, lng: -74.0060 },
   'new york city': { lat: 40.7128, lng: -74.0060 },
   'nyc': { lat: 40.7128, lng: -74.0060 },
-  'ny': { lat: 40.7128, lng: -74.0060 },
-  'new york state': { lat: 42.6526, lng: -73.7562 },
+  'ny': { lat: 42.0987, lng: -75.9180 },
+  'new york state': { lat: 42.0987, lng: -75.9180 },
   'albany': { lat: 42.6526, lng: -73.7562 },
   'albany ny': { lat: 42.6526, lng: -73.7562 },
   'manhattan': { lat: 40.7831, lng: -73.9712 },
@@ -55,7 +61,6 @@ const KNOWN_LOCATIONS: Record<string, LatLngPoint> = {
   'mount vernon': { lat: 40.9126, lng: -73.8371 },
   'schenectady': { lat: 42.8142, lng: -73.9396 },
   'utica': { lat: 43.1009, lng: -75.2327 },
-  'binghamton': { lat: 42.0987, lng: -75.9180 },
   'ithaca': { lat: 42.4439, lng: -76.5019 },
   'niagara falls': { lat: 43.0962, lng: -79.0377 },
   'saratoga': { lat: 43.0831, lng: -73.7846 },
@@ -68,6 +73,8 @@ const KNOWN_LOCATIONS: Record<string, LatLngPoint> = {
   'hempstead': { lat: 40.7062, lng: -73.6187 },
   
   // Airports & Landmarks
+  'bgm': { lat: 42.2086, lng: -75.9797 },
+  'binghamton airport': { lat: 42.2086, lng: -75.9797 },
   'jfk': { lat: 40.6413, lng: -73.7781 },
   'jfk airport': { lat: 40.6413, lng: -73.7781 },
   'kennedy airport': { lat: 40.6413, lng: -73.7781 },
@@ -82,9 +89,9 @@ const KNOWN_LOCATIONS: Record<string, LatLngPoint> = {
   'wall street': { lat: 40.7074, lng: -74.0113 },
   'grand central': { lat: 40.7527, lng: -73.9772 },
   'brooklyn bridge': { lat: 40.7061, lng: -73.9969 },
-  'home': { lat: 40.7128, lng: -74.0060 },
-  'work': { lat: 40.7580, lng: -73.9855 },
-  'airport': { lat: 40.6413, lng: -73.7781 },
+  'home': { lat: 42.0987, lng: -75.9180 },
+  'work': { lat: 42.0851, lng: -76.0538 },
+  'airport': { lat: 42.2086, lng: -75.9797 },
 
   // Secondary major US cities
   'chicago': { lat: 41.8781, lng: -87.6298 },

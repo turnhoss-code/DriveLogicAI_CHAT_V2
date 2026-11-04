@@ -88,7 +88,7 @@ export const LiveHazardRadar: React.FC<LiveHazardRadarProps> = ({
       window.dispatchEvent(
         new CustomEvent('drivelogic:proactive-scan', {
           detail: {
-            location: searchLocation || data?.location || 'Current Route',
+            location: searchLocation || data?.location || 'Binghamton, NY',
             verbalAlert: data?.verbalAlert,
             sources: data?.sources,
           },
@@ -97,7 +97,7 @@ export const LiveHazardRadar: React.FC<LiveHazardRadarProps> = ({
     }
   };
 
-  const quickLocations = ["I-87 Northway", "NYS Thruway I-90", "Taconic Pkwy", "NYC Metro", "Albany, NY"];
+  const quickLocations = ["Binghamton, NY", "I-81 Corridor", "NY-17 / I-86", "Vestal Pkwy", "Johnson City, NY"];
 
   return (
     <div className={cn("bg-[#1e232d]/95 backdrop-blur-md border border-white/10 rounded-xl overflow-hidden shadow-2xl flex flex-col", className)}>

@@ -117,11 +117,11 @@ const darkMapStyles = [
   },
 ];
 
-// Mock user-posted speed trap data in New York State
+// Mock user-posted speed trap data in Binghamton, NY & Southern Tier
 const MOCK_SPEED_TRAPS = [
-  { id: '1', lat: 40.7128, lng: -74.0060, reportedAt: Date.now() - 1000 * 60 * 15 }, // Lower Manhattan / FDR
-  { id: '2', lat: 40.7589, lng: -73.9851, reportedAt: Date.now() - 1000 * 60 * 45 }, // Midtown / West Side Hwy
-  { id: '3', lat: 42.6526, lng: -73.7562, reportedAt: Date.now() - 1000 * 60 * 120 }, // Albany / I-87
+  { id: '1', lat: 42.0987, lng: -75.9180, reportedAt: Date.now() - 1000 * 60 * 15 }, // Downtown Binghamton / I-81
+  { id: '2', lat: 42.1156, lng: -75.9588, reportedAt: Date.now() - 1000 * 60 * 45 }, // Johnson City / NY-17
+  { id: '3', lat: 42.0851, lng: -76.0538, reportedAt: Date.now() - 1000 * 60 * 120 }, // Vestal Pkwy / NY-434
 ];
 
 
@@ -161,7 +161,7 @@ export default function GPSTab({ isRecording, trips, navigation, setNavigation, 
   const loadHazards = useCallback(async (loc?: string) => {
     setIsLoadingHazards(true);
     try {
-      const targetLoc = loc || navigation.to || navigation.from || 'Albany, NY';
+      const targetLoc = loc || navigation.to || navigation.from || 'Binghamton, NY';
       const res = await fetchLiveTrafficHazards({
         location: targetLoc,
         lat: location?.lat || DEFAULT_NY_LOCATION.lat,

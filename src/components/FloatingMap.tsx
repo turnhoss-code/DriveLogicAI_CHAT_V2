@@ -212,7 +212,7 @@ export default function FloatingMap({
   useEffect(() => {
     if (isMinimized) return;
     let active = true;
-    const targetLoc = navigation.to || navigation.from || 'Albany, NY';
+    const targetLoc = navigation.to || navigation.from || 'Binghamton, NY';
     fetchLiveTrafficHazards({
       location: targetLoc,
       lat: location?.lat || DEFAULT_NY_LOCATION.lat,
